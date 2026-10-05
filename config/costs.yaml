@@ -1,0 +1,7 @@
+# Placeholder until E2 measures XTB fills.
+commission_free_monthly_eur: 100000
+commission_pct_above_limit: 0.002
+commission_min_eur: 10
+default_half_spread_pct: 0.0005
+slippage_bps: 2.0
+turnover_warn_fraction: 0.8

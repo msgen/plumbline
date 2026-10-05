@@ -1,0 +1,8 @@
+# Starting values only; E3 to E5 decide the real ones.
+A_breakout:
+  rvol_min: 2.5
+B_vwap_reclaim:
+  band_sigma: 1.5
+  lookback_bars: 30
+C_catalyst_gap:
+  min_gap_pct: 0.03

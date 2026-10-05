@@ -1,0 +1,5 @@
+min_price: 10.0
+min_dollar_volume_20d: 50000000
+min_atr_pct: 0.02
+max_spread_pct: 0.0010
+exclude_types: [etf, fund, warrant, right, unit]

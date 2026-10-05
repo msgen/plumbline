@@ -1,0 +1,6 @@
+id: E0
+question: Is the history trustworthy and free of survivorship bias?
+gate:
+  delisted_present_min: 0.90
+  missing_regular_minutes_max: 0.005
+  daily_vs_minute_volume_tol: 0.02

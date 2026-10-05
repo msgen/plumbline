@@ -1,0 +1,105 @@
+[project]
+name = "signalplat"
+version = "0.1.0"
+description = "Intraday signal platform (IDesign layout)"
+requires-python = ">=3.11"
+dependencies = ["pandas>=2.2", "pyarrow", "duckdb", "pyyaml"]
+
+[project.optional-dependencies]
+dev = ["pytest", "hypothesis", "import-linter", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.importlinter]
+root_package = "signalplat"
+
+[[tool.importlinter.contracts]]
+name = "Layers: clients > managers > engines | accessors"
+type = "layers"
+layers = ["signalplat.clients", "signalplat.managers", "signalplat.engines | signalplat.accessors"]
+# contracts and utilities are shared, so they sit outside the layer stack
+exhaustive = false
+
+[[tool.importlinter.contracts]]
+name = "Rule 1: clients call managers only"
+type = "forbidden"
+source_modules = ["signalplat.clients"]
+forbidden_modules = ["signalplat.engines", "signalplat.accessors"]
+
+[[tool.importlinter.contracts]]
+name = "Rule 2: managers do not call other managers"
+type = "independence"
+modules = [
+  "signalplat.managers.ingestion",
+  "signalplat.managers.experiment",
+  "signalplat.managers.scan",
+  "signalplat.managers.outcome",
+  "signalplat.managers.model",
+]
+
+[[tool.importlinter.contracts]]
+name = "Rule 3: engines call nothing (no accessors, managers or each other)"
+type = "forbidden"
+source_modules = ["signalplat.engines"]
+forbidden_modules = ["signalplat.accessors", "signalplat.managers", "signalplat.clients"]
+
+[[tool.importlinter.contracts]]
+name = "Rule 3b: engines are independent of each other"
+type = "independence"
+modules = [
+  "signalplat.engines.universe",
+  "signalplat.engines.setups",
+  "signalplat.engines.features",
+  "signalplat.engines.labeling",
+  "signalplat.engines.costs",
+  "signalplat.engines.regime",
+  "signalplat.engines.catalyst",
+  "signalplat.engines.modeling",
+  "signalplat.engines.validation",
+  "signalplat.engines.ranking",
+  "signalplat.engines.sizing",
+  "signalplat.engines.analytics",
+]
+
+[[tool.importlinter.contracts]]
+name = "Rule 4: accessors do not call each other"
+type = "independence"
+modules = [
+  "signalplat.accessors.bars_alpaca",
+  "signalplat.accessors.bars_parquet",
+  "signalplat.accessors.news_alpaca",
+  "signalplat.accessors.filings_edgar",
+  "signalplat.accessors.reference_alpaca",
+  "signalplat.accessors.classifier_jev",
+  "signalplat.accessors.classifier_llm",
+  "signalplat.accessors.signal_store",
+  "signalplat.accessors.experiment_store",
+  "signalplat.accessors.model_store",
+]
+
+[[tool.importlinter.contracts]]
+name = "Rule 4b: accessors never call engines, managers or clients"
+type = "forbidden"
+source_modules = ["signalplat.accessors"]
+forbidden_modules = ["signalplat.engines", "signalplat.managers", "signalplat.clients"]
+
+[[tool.importlinter.contracts]]
+name = "Rule 6: contracts and utilities hold no layer dependencies"
+type = "forbidden"
+source_modules = ["signalplat.contracts", "signalplat.utilities"]
+forbidden_modules = [
+  "signalplat.clients", "signalplat.managers", "signalplat.engines", "signalplat.accessors",
+]
