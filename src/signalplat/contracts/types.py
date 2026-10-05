@@ -90,3 +90,9 @@ class ReferenceAccessor(Protocol):
 
 class NewsAccessor(Protocol):
     def news(self, symbols: Sequence[str], start: datetime, end: datetime) -> list[NewsItem]: ...
+
+
+class FilingsAccessor(Protocol):
+    def filings(self, symbols: Sequence[str], start: datetime, end: datetime) -> pd.DataFrame:
+        """symbol, cik, accession, form, items, accepted_at, available_at, primary_document."""
+        ...

@@ -33,6 +33,16 @@ class DatasetStore:
             write_part(g, self._root / "news" / f"month={month}")
         return len(df)
 
+    def write_filings(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        for year, g in df.groupby(df["accepted_at"].dt.year):
+            write_part(g, self._root / "edgar" / f"year={year}")
+        return len(df)
+
+    def read_filings(self) -> pd.DataFrame | None:
+        return read_parts(self._root / "edgar")
+
     # The manifest lets an interrupted backfill resume without refetching finished chunks.
     def is_done(self, key: str) -> bool:
         path = self._root / "_manifest.jsonl"

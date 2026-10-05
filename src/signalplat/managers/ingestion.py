@@ -8,9 +8,11 @@ from pathlib import Path
 from signalplat.accessors.bars_alpaca import AlpacaBars
 from signalplat.accessors.bars_parquet import ParquetBars
 from signalplat.accessors.dataset_store import DatasetStore
+from signalplat.accessors.filings_edgar import EdgarFilings
 from signalplat.accessors.news_alpaca import AlpacaNews
 from signalplat.accessors.reference_alpaca import AlpacaReference
 from signalplat.contracts.types import Feed
+from signalplat.engines.quality import sample_delisted
 from signalplat.utilities.clock import Clock, SystemClock
 from signalplat.utilities.env import load_env, require
 from signalplat.utilities.http import JsonHttp
@@ -41,8 +43,10 @@ class IngestionManager:
         bars_store: ParquetBars,
         store: DatasetStore,
         clock: Clock,
+        filings: EdgarFilings | None = None,
     ) -> None:
         self._bars, self._reference, self._news = bars, reference, news
+        self._filings = filings
         self._bars_store, self._store, self._clock = bars_store, store, clock
 
     @classmethod
@@ -59,9 +63,15 @@ class IngestionManager:
         )
         root = Path(env.get("DATA_DIR", "./data"))
         clock = SystemClock()
+        filings = None
+        if env.get("SEC_USER_AGENT"):
+            sec = {"User-Agent": env["SEC_USER_AGENT"]}
+            filings = EdgarFilings(
+                JsonHttp("https://www.sec.gov", sec), JsonHttp("https://data.sec.gov", sec)
+            )
         return cls(
             AlpacaBars(data, clock), AlpacaReference(trading), AlpacaNews(data),
-            ParquetBars(root), DatasetStore(root), clock,
+            ParquetBars(root), DatasetStore(root), clock, filings,
         )
 
     def ingest_reference(self) -> int:
@@ -98,6 +108,24 @@ class IngestionManager:
             total += self._run(key, hi, lambda a=lo, b=hi: self._store.write_news(
                 self._news.news(symbols, a, b)))
         return total
+
+    def ingest_filings(self, symbols: Sequence[str], start: datetime, end: datetime) -> int:
+        if self._filings is None:
+            raise KeyError("missing required settings in .env: SEC_USER_AGENT")
+        key = f"filings|{start:%F}|{end:%F}|{','.join(symbols)}"
+        return self._run(key, end, lambda: self._store.write_filings(
+            self._filings.filings(symbols, start, end)))
+
+    def ingest_delisted_sample(
+        self, n: int, seed: int, start: datetime, end: datetime
+    ) -> list[str]:
+        """Fetch daily bars for a seeded sample of inactive symbols, for the E0 audit."""
+        assets = self._store.read_assets()
+        if assets is None:
+            raise RuntimeError("no asset list stored yet; ingest the reference data first")
+        sample = sample_delisted(assets, n, seed)
+        self.ingest_daily(sample, start, end)
+        return sample
 
     def _run(self, key: str, chunk_end: datetime, fetch) -> int:
         if self._store.is_done(key):

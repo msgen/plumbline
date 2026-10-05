@@ -34,3 +34,9 @@ def read_parts(
         ).df()
     finally:
         con.close()
+
+
+def fingerprint(directory: Path) -> str:
+    """Content hash of a dataset. Part names are content hashes, so names identify the data."""
+    names = sorted(str(p.relative_to(directory)) for p in directory.rglob("part-*.parquet"))
+    return hash_bytes("\n".join(names).encode())

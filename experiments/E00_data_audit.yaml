@@ -4,3 +4,5 @@ gate:
   delisted_present_min: 0.90
   missing_regular_minutes_max: 0.005
   daily_vs_minute_volume_tol: 0.02
+delisted_sample: 50
+seed: 7

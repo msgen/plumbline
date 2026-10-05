@@ -77,6 +77,7 @@ modules = [
   "signalplat.engines.ranking",
   "signalplat.engines.sizing",
   "signalplat.engines.analytics",
+  "signalplat.engines.quality",
 ]
 
 [[tool.importlinter.contracts]]

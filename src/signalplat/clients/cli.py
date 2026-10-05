@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from signalplat.contracts.types import Feed
+from signalplat.managers.experiment import ExperimentManager
 from signalplat.managers.ingestion import IngestionManager
 
 
@@ -29,9 +30,18 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("--symbols-file", help="file with one symbol per line")
     ing.add_argument("--start", type=_day, required=True, help="YYYY-MM-DD (UTC)")
     ing.add_argument("--end", type=_day, required=True, help="YYYY-MM-DD (UTC, exclusive)")
-    ing.add_argument("--only", nargs="+", choices=["reference", "daily", "minute", "news"],
-                     default=["reference", "daily", "minute", "news"])
+    steps = ["reference", "daily", "minute", "news", "filings"]
+    ing.add_argument("--only", nargs="+", choices=steps, default=steps)
+    ing.add_argument("--delisted-sample", type=int, default=0, metavar="N",
+                     help="also fetch daily bars for N sampled inactive symbols (for E0)")
+    ing.add_argument("--seed", type=int, default=7)
     ing.add_argument("--feeds", nargs="+", choices=[f.value for f in Feed], default=["sip", "iex"])
+    aud = sub.add_parser("audit", help="run the E0 data audit on stored data")
+    aud.add_argument("--symbols", default="", help="comma-separated symbols")
+    aud.add_argument("--symbols-file", help="file with one symbol per line")
+    aud.add_argument("--start", type=_day, required=True)
+    aud.add_argument("--end", type=_day, required=True)
+    aud.add_argument("--config", default="experiments/E00_data_audit.yaml")
     return parser
 
 
@@ -50,6 +60,18 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"minute bars ({feed}): {n}")
         if symbols and "news" in args.only:
             print(f"news: {mgr.ingest_news(symbols, args.start, args.end)}")
+        if symbols and "filings" in args.only:
+            print(f"filings: {mgr.ingest_filings(symbols, args.start, args.end)}")
+        if args.delisted_sample:
+            sample = mgr.ingest_delisted_sample(
+                args.delisted_sample, args.seed, args.start, args.end)
+            print(f"delisted sample daily bars fetched for {len(sample)} symbols")
+    elif args.command == "audit":
+        result = ExperimentManager.from_env().run_e0(
+            args.config, _symbols(args), args.start, args.end)
+        print((Path(result["directory"]) / "report.md").read_text(encoding="utf-8"))
+        print(f"saved to {result['directory']}")
+        return 0 if result["passed"] else 1
     return 0
 
 
