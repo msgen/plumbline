@@ -76,6 +76,11 @@ class IngestionManager:
             ParquetBars(root), DatasetStore(root), clock, filings,
         )
 
+    @property
+    def skipped_symbols(self) -> dict[str, str]:
+        """Symbols the data vendor refused (usually delisted or unknown), with the reason."""
+        return dict(self._bars.skipped)
+
     def ingest_reference(self) -> int:
         df = self._reference.assets()
         self._store.write_assets(df)

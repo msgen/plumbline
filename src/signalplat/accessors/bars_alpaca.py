@@ -8,13 +8,16 @@ import pandas as pd
 
 from signalplat.contracts.types import Feed
 from signalplat.utilities.clock import Clock, clamp_sip_end
-from signalplat.utilities.http import JsonHttp
+from signalplat.utilities.http import HttpError, JsonHttp
+from signalplat.utilities.logging import get_logger
 from signalplat.utilities.ratelimit import RateLimiter
 
 BAR_COLUMNS = [
     "symbol", "timestamp", "open", "high", "low", "close",
     "volume", "vwap", "trade_count", "available_at",
 ]
+log = get_logger("bars_alpaca")
+_REJECTED = (400, 422)  # the vendor refused the request, typically over an unknown symbol
 _TIMEFRAMES = {"1Min": timedelta(minutes=1), "1Day": timedelta(days=1)}
 
 
@@ -24,6 +27,7 @@ class AlpacaBars:
     def __init__(self, http: JsonHttp, clock: Clock, limiter: RateLimiter | None = None) -> None:
         self._http, self._clock = http, clock
         self._limiter = limiter or RateLimiter(190, 60.0)
+        self.skipped: dict[str, str] = {}  # symbols the vendor rejected, with the reason
 
     def minute_bars(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed
@@ -42,6 +46,24 @@ class AlpacaBars:
             end = clamp_sip_end(end, self._clock.now())
         if not symbols or end <= start:
             return pd.DataFrame(columns=BAR_COLUMNS)
+        try:
+            return self._fetch(symbols, start, end, feed, timeframe)
+        except HttpError as e:
+            if e.status not in _REJECTED:
+                raise
+            if len(symbols) == 1:
+                self.skipped[symbols[0]] = str(e)
+                log.warning("symbol rejected", extra={"fields": {"symbol": symbols[0]}})
+                return pd.DataFrame(columns=BAR_COLUMNS)
+            mid = len(symbols) // 2  # bisect to isolate the offending symbols
+            parts = [self._bars(symbols[:mid], start, end, feed, timeframe),
+                     self._bars(symbols[mid:], start, end, feed, timeframe)]
+            parts = [p for p in parts if not p.empty]
+            return _concat(parts)
+
+    def _fetch(
+        self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed, timeframe: str
+    ) -> pd.DataFrame:
         params = {
             "symbols": ",".join(symbols), "timeframe": timeframe,
             "start": start.isoformat(), "end": end.isoformat(),
@@ -58,6 +80,12 @@ class AlpacaBars:
             if not token:
                 break
         return _to_frame(rows, _TIMEFRAMES[timeframe])
+
+
+def _concat(parts: list[pd.DataFrame]) -> pd.DataFrame:
+    if not parts:
+        return pd.DataFrame(columns=BAR_COLUMNS)
+    return pd.concat(parts).sort_values(["symbol", "timestamp"]).reset_index(drop=True)
 
 
 def _to_frame(rows: list[dict], width: timedelta) -> pd.DataFrame:

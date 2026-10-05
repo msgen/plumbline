@@ -8,6 +8,7 @@ from pathlib import Path
 from signalplat.contracts.types import Feed
 from signalplat.managers.experiment import ExperimentManager
 from signalplat.managers.ingestion import IngestionManager
+from signalplat.utilities.http import HttpError
 
 
 def _day(text: str) -> datetime:
@@ -57,6 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    try:
+        return _run(args)
+    except HttpError as e:
+        print(f"error: {e}")
+        return 1
+
+
+def _run(args: argparse.Namespace) -> int:
     if args.command == "ingest":
         mgr = IngestionManager.from_env()
         symbols = _symbols(args)
@@ -76,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
             sample = mgr.ingest_delisted_sample(
                 args.delisted_sample, args.seed, args.start, args.end)
             print(f"delisted sample daily bars fetched for {len(sample)} symbols")
+        if mgr.skipped_symbols:
+            print(f"vendor rejected {len(mgr.skipped_symbols)} symbols: "
+                  f"{', '.join(sorted(mgr.skipped_symbols))}")
     elif args.command == "pilot":
         checked, table = IngestionManager.from_env().select_pilot(
             args.as_of, args.n, args.config)

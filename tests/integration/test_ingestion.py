@@ -178,3 +178,33 @@ def test_select_pilot_end_to_end(tmp_path):
     mgr.ingest_reference()
     checked, table = mgr.select_pilot(datetime(2026, 9, 30, tzinfo=UTC), 10, cfg)
     assert checked == 2 and list(table["symbol"]) == ["BIG"]  # BIG trades $100M a day, SMALL $50k
+
+
+def test_bars_bisect_around_rejected_symbols_and_report_them():
+    class Picky:
+        """Rejects any request that includes BAD, like a vendor refusing an unknown symbol."""
+
+        def __init__(self):
+            self.urls = []
+
+        def __call__(self, url, headers):
+            self.urls.append(url)
+            if "BAD" in url:
+                return 400, b'{"message":"invalid symbol: BAD"}'
+            syms = url.split("symbols=")[1].split("&")[0].split("%2C")
+            body = {"bars": {s: [bar("2026-10-01T13:30:00Z")] for s in syms}}
+            return 200, json.dumps(body).encode()
+
+    tr = Picky()
+    http = JsonHttp("https://x", {}, transport=tr, sleep=lambda s: None)
+    acc = AlpacaBars(http, FixedClock(NOW), RateLimiter(1000))
+    df = acc.daily_bars(["AAA", "BBB", "BAD", "CCC"], NOW - timedelta(days=9), NOW)
+    assert sorted(df["symbol"]) == ["AAA", "BBB", "CCC"]
+    assert list(acc.skipped) == ["BAD"] and "invalid symbol" in acc.skipped["BAD"]
+
+
+def test_other_http_errors_still_raise():
+    http, _ = make_http({"/v2/stocks/bars": [(403, {})]})
+    acc = AlpacaBars(http, FixedClock(NOW), RateLimiter(1000))
+    with pytest.raises(HttpError):
+        acc.daily_bars(["AAA"], NOW - timedelta(days=9), NOW)
