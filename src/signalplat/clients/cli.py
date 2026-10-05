@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="also fetch daily bars for N sampled inactive symbols (for E0)")
     ing.add_argument("--seed", type=int, default=7)
     ing.add_argument("--feeds", nargs="+", choices=[f.value for f in Feed], default=["sip", "iex"])
+    pil = sub.add_parser("pilot", help="pick the most liquid stocks that pass the universe filters")
+    pil.add_argument("--as-of", type=_day, required=True, help="YYYY-MM-DD; uses data before it")
+    pil.add_argument("--n", type=int, default=200)
+    pil.add_argument("--config", default="config/universe.yaml")
+    pil.add_argument("--out", default="config/pilot.txt")
     aud = sub.add_parser("audit", help="run the E0 data audit on stored data")
     aud.add_argument("--symbols", default="", help="comma-separated symbols")
     aud.add_argument("--symbols-file", help="file with one symbol per line")
@@ -71,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
             sample = mgr.ingest_delisted_sample(
                 args.delisted_sample, args.seed, args.start, args.end)
             print(f"delisted sample daily bars fetched for {len(sample)} symbols")
+    elif args.command == "pilot":
+        checked, table = IngestionManager.from_env().select_pilot(
+            args.as_of, args.n, args.config)
+        Path(args.out).write_text("\n".join(table["symbol"]) + "\n", encoding="utf-8")
+        print(f"{checked} eligible symbols checked, {len(table)} written to {args.out}")
+        print(table.head(10).to_string(index=False))
     elif args.command == "audit":
         result = ExperimentManager.from_env().run_e0(
             args.config, _symbols(args), args.start, args.end)

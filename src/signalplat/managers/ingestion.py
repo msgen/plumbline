@@ -13,7 +13,9 @@ from signalplat.accessors.news_alpaca import AlpacaNews
 from signalplat.accessors.reference_alpaca import AlpacaReference
 from signalplat.contracts.types import Feed
 from signalplat.engines.quality import sample_delisted
+from signalplat.engines.universe import eligible_assets, select_universe
 from signalplat.utilities.clock import Clock, SystemClock
+from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env, require
 from signalplat.utilities.http import JsonHttp
 from signalplat.utilities.logging import get_logger
@@ -115,6 +117,22 @@ class IngestionManager:
         key = f"filings|{start:%F}|{end:%F}|{','.join(symbols)}"
         return self._run(key, end, lambda: self._store.write_filings(
             self._filings.filings(symbols, start, end)))
+
+    def select_pilot(
+        self, as_of: datetime, n: int, config_path: str | Path, lookback_days: int = 45
+    ):
+        """Fetch recent daily bars for every eligible stock, then keep the n most liquid.
+
+        Uses only bars available before as_of. Needs the reference data to be ingested first.
+        """
+        assets = self._store.read_assets()
+        if assets is None:
+            raise RuntimeError("no asset list stored yet; run ingest --only reference first")
+        candidates = eligible_assets(assets)
+        start = as_of - timedelta(days=lookback_days)
+        self.ingest_daily(candidates, start, as_of)
+        daily = self._bars_store.daily_bars(candidates, start, as_of)
+        return len(candidates), select_universe(daily, as_of, load_config(config_path), n)
 
     def ingest_delisted_sample(
         self, n: int, seed: int, start: datetime, end: datetime

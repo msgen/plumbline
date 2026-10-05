@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import pandas as pd
 import pytest
 
 from signalplat.accessors.bars_alpaca import AlpacaBars
@@ -150,3 +151,30 @@ def test_env_loader(tmp_path):
     with pytest.raises(KeyError, match="C"):
         require(env, "A", "C")
 
+
+
+def test_select_pilot_end_to_end(tmp_path):
+    ts = pd.bdate_range("2026-08-10", periods=25, tz="UTC")
+
+    def b(vol):
+        return [{"t": t.isoformat().replace("+00:00", "Z"), "o": 50, "h": 52, "l": 48,
+                 "c": 50, "v": vol, "vw": 50, "n": 5} for t in ts]
+
+    http, _ = make_http({
+        "/v2/stocks/bars": [(200, {"bars": {"BIG": b(2_000_000), "SMALL": b(1_000)}})],
+        "/v2/assets": [(200, [
+            {"symbol": s, "name": f"{s} Inc", "exchange": "NYSE", "status": "active",
+             "tradable": True, "class": "us_equity"} for s in ("BIG", "SMALL")]), (200, [])],
+    })
+    clock = FixedClock(NOW)
+    mgr = IngestionManager(
+        AlpacaBars(http, clock, RateLimiter(1000)), AlpacaReference(http),
+        AlpacaNews(http, limiter=RateLimiter(1000)), ParquetBars(tmp_path),
+        DatasetStore(tmp_path), clock)
+    cfg = tmp_path / "u.yaml"
+    cfg.write_text("min_price: 10\nmin_dollar_volume_20d: 50000000\nmin_atr_pct: 0.02\n")
+    with pytest.raises(RuntimeError, match="reference"):
+        mgr.select_pilot(NOW, 10, cfg)
+    mgr.ingest_reference()
+    checked, table = mgr.select_pilot(datetime(2026, 9, 30, tzinfo=UTC), 10, cfg)
+    assert checked == 2 and list(table["symbol"]) == ["BIG"]  # BIG trades $100M a day, SMALL $50k
