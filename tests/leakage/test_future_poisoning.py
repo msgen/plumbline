@@ -26,6 +26,6 @@ def test_poisoning_future_data_does_not_change_the_view():
 
 def test_naive_as_of_and_missing_available_at_rejected():
     with pytest.raises(ValueError):
-        FramePointInTimeView({"bars": _bars()}, datetime(2026, 7, 6, 14, 0))
+        FramePointInTimeView({"bars": _bars()}, datetime(2026, 7, 6, 14, 0))  # noqa: DTZ001
     with pytest.raises(ValueError):
         FramePointInTimeView({"bars": pd.DataFrame({"x": [1]})}, AS_OF)

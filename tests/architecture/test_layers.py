@@ -9,7 +9,7 @@ LINT = shutil.which("lint-imports") or "lint-imports"
 def _lint(cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [LINT],
-        cwd=cwd, capture_output=True, text=True,
+        cwd=cwd, capture_output=True, text=True, check=False,
         env={"PYTHONPATH": str(cwd / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin"},
     )
 
@@ -27,7 +27,7 @@ def test_illegal_import_fails_the_build(tmp_path):
     bad.write_text("from signalplat.accessors import bars_alpaca  # noqa\n")
     r = subprocess.run(
         [LINT],
-        cwd=tmp_path, capture_output=True, text=True,
+        cwd=tmp_path, capture_output=True, text=True, check=False,
         env={"PYTHONPATH": str(tmp_path / "src"), "PATH": "/usr/bin:/bin:/usr/local/bin"},
     )
     assert r.returncode != 0

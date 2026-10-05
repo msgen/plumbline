@@ -11,5 +11,5 @@ def load_config(path: str | Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: expected a mapping at the top level")
+        raise TypeError(f"{path}: expected a mapping at the top level")
     return data

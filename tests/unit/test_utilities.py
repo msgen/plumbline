@@ -3,7 +3,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from signalplat.utilities.clock import (
-    FixedClock, clamp_sip_end, is_regular_session, to_ny,
+    FixedClock,
+    clamp_sip_end,
+    is_regular_session,
+    to_ny,
 )
 from signalplat.utilities.config import load_config
 from signalplat.utilities.eventbus import EventBus
@@ -29,7 +32,7 @@ def test_clamp_sip_end():
 
 def test_fixed_clock_requires_tz_and_advances():
     with pytest.raises(ValueError):
-        FixedClock(datetime(2026, 1, 1))
+        FixedClock(datetime(2026, 1, 1))  # noqa: DTZ001
     c = FixedClock(datetime(2026, 1, 1, tzinfo=UTC))
     c.advance(timedelta(seconds=30))
     assert c.now() == datetime(2026, 1, 1, 0, 0, 30, tzinfo=UTC)
@@ -58,7 +61,7 @@ def test_eventbus_and_hash_and_config(tmp_path):
     p.write_text("x: 1\n")
     assert load_config(p) == {"x": 1}
     p.write_text("- 1\n")
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         load_config(p)
 
 
