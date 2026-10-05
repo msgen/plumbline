@@ -80,13 +80,14 @@ def test_e0_end_to_end_pass_and_fail(tmp_path):
     bars, store = ParquetBars(tmp_path), DatasetStore(tmp_path)
     bars.write_minute(_bars("AAA", "2026-10-01"), Feed.SIP)
     bars.write_daily(_daily("AAA", "2026-10-01", 39000))
-    assets = pd.DataFrame({"symbol": ["D1", "D2"], "name": "n", "exchange": "NYSE",
+    assets = pd.DataFrame({"symbol": ["DAA", "DBB"], "name": "n", "exchange": "NYSE",
                            "status": "inactive", "tradable": False, "asset_class": "us_equity"})
     store.write_assets(assets)
-    bars.write_daily(pd.concat([_daily("D1", "2026-10-01", 1), _daily("D2", "2026-10-01", 1)]))
+    bars.write_daily(pd.concat([_daily("DAA", "2026-10-01", 1), _daily("DBB", "2026-10-01", 1)]))
     cfg = tmp_path / "e0.yaml"
     cfg.write_text("gate: {delisted_present_min: 0.9, missing_regular_minutes_max: 0.005,"
-                   " daily_vs_minute_volume_tol: 0.02}\ndelisted_sample: 2\nseed: 1\n")
+                   " daily_vs_minute_volume_tol: 0.02}\ndelisted_sample: 2\nseed: 1\n"
+                   "delisted_start: 2016-01-01\n")
     mgr = ExperimentManager(bars, store, ExperimentStore(tmp_path),
                             FixedClock(datetime(2026, 10, 5, 12, 0, tzinfo=UTC)))
     s, e = datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 10, 5, tzinfo=UTC)

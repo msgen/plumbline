@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -9,6 +10,7 @@ import pandas as pd
 
 from signalplat.utilities.clock import NY
 
+_TICKER = re.compile(r"^[A-Z]{1,5}$")  # drops escrow, CVR and CUSIP-style placeholders
 MAJOR_EXCHANGES = ("NYSE", "NASDAQ", "AMEX", "ARCA", "BATS")
 REGULAR_MINUTES = 390
 EXTENDED_OPEN, EXTENDED_CLOSE = 4 * 60, 20 * 60  # 04:00-20:00 New York
@@ -18,9 +20,9 @@ REGULAR_OPEN, REGULAR_CLOSE = 9 * 60 + 30, 16 * 60
 def sample_delisted(
     assets: pd.DataFrame, n: int, seed: int, exchanges: Sequence[str] = MAJOR_EXCHANGES
 ) -> list[str]:
-    """Seeded sample of inactive symbols on major exchanges (OTC names excluded)."""
+    """Seeded sample of inactive, ticker-like symbols on major exchanges (OTC excluded)."""
     inactive = assets[(assets["status"] == "inactive") & assets["exchange"].isin(exchanges)]
-    symbols = sorted(inactive["symbol"].unique())
+    symbols = sorted(s for s in inactive["symbol"].unique() if _TICKER.match(s))
     return sorted(random.Random(seed).sample(symbols, min(n, len(symbols))))
 
 

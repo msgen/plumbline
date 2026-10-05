@@ -1,7 +1,7 @@
 """Experiment manager: the sequence of a run (load data, compute, gate, report, store)."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +42,8 @@ class ExperimentManager:
             quality.sample_delisted(assets, cfg["delisted_sample"], cfg["seed"])
             if assets is not None else []
         )
-        delisted_daily = self._bars.daily_bars(sample, start, end)
+        delisted_start = datetime.combine(cfg["delisted_start"], time(), tzinfo=UTC)
+        delisted_daily = self._bars.daily_bars(sample, min(start, delisted_start), end)
 
         metrics = {
             "delisted": quality.delisted_coverage(sample, delisted_daily),

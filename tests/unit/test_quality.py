@@ -65,12 +65,13 @@ def test_volume_consistency_picks_matching_convention():
 
 def test_delisted_sampling_is_seeded_and_excludes_otc():
     assets = pd.DataFrame({
-        "symbol": [f"S{i}" for i in range(30)] + ["ACT", "OTCX"],
-        "status": ["inactive"] * 30 + ["active", "inactive"],
-        "exchange": ["NYSE"] * 30 + ["NYSE", "OTC"]})
+        "symbol": [f"S{chr(65 + i // 26)}{chr(65 + i % 26)}" for i in range(30)]
+        + ["ACT", "OTCX", "464ESC045"],
+        "status": ["inactive"] * 30 + ["active", "inactive", "inactive"],
+        "exchange": ["NYSE"] * 30 + ["NYSE", "OTC", "NYSE"]})
     a = q.sample_delisted(assets, 10, seed=1)
     assert a == q.sample_delisted(assets, 10, seed=1) and len(a) == 10
-    assert "ACT" not in a and "OTCX" not in a
+    assert "ACT" not in a and "OTCX" not in a and "464ESC045" not in a
     cov = q.delisted_coverage(a, pd.DataFrame({"symbol": a[:9]}))
     assert cov["present"] == 9 and cov["missing"] == [a[9]] and cov["fraction"] == 0.9
 

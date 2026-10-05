@@ -6,3 +6,5 @@ gate:
   daily_vs_minute_volume_tol: 0.02
 delisted_sample: 50
 seed: 7
+# delisted names mostly stopped trading years ago, so they are checked over the full history
+delisted_start: 2016-01-01

@@ -41,6 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("--delisted-sample", type=int, default=0, metavar="N",
                      help="also fetch daily bars for N sampled inactive symbols (for E0)")
     ing.add_argument("--seed", type=int, default=7)
+    ing.add_argument("--delisted-start", type=_day, default=_day("2016-01-01"),
+                     help="history start for the delisted sample (default 2016-01-01)")
     ing.add_argument("--feeds", nargs="+", choices=[f.value for f in Feed], default=["sip", "iex"])
     pil = sub.add_parser("pilot", help="pick the most liquid stocks that pass the universe filters")
     pil.add_argument("--as-of", type=_day, required=True, help="YYYY-MM-DD; uses data before it")
@@ -83,7 +85,7 @@ def _run(args: argparse.Namespace) -> int:
             print(f"filings: {mgr.ingest_filings(symbols, args.start, args.end)}")
         if args.delisted_sample:
             sample = mgr.ingest_delisted_sample(
-                args.delisted_sample, args.seed, args.start, args.end)
+                args.delisted_sample, args.seed, args.delisted_start, args.end)
             print(f"delisted sample daily bars fetched for {len(sample)} symbols")
         if mgr.skipped_symbols:
             print(f"vendor rejected {len(mgr.skipped_symbols)} symbols: "
