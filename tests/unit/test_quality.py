@@ -24,6 +24,7 @@ def test_missing_minutes_counts_gaps_and_ignores_half_days():
     d = pd.concat([daily("AAA", "2026-10-01"), daily("BBB", "2026-10-01")])
     r = q.missing_regular_minutes(pd.concat([full, gappy]), d)
     assert r["missing"] == 39 and r["symbol_days"] == 2
+    assert r["worst"] == [("BBB", "2026-10-01", 39)]  # complete days are not listed
     assert abs(r["fraction"] - 39 / 780) < 1e-9
     # early close: market-wide span is 210 minutes, so nothing is missing
     half = pd.concat([minutes("AAA", "2026-11-27", n=210), minutes("BBB", "2026-11-27", n=210)])

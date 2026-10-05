@@ -74,7 +74,7 @@ def missing_regular_minutes(minute: pd.DataFrame, daily: pd.DataFrame) -> dict[s
     d["observed"] = d["observed"].fillna(0).clip(upper=d["expected"])
     d["missing"] = d["expected"] - d["observed"]
     expected, missing = float(d["expected"].sum()), float(d["missing"].sum())
-    worst = d.sort_values("missing", ascending=False).head(10)
+    worst = d[d["missing"] > 0].sort_values("missing", ascending=False).head(10)
     return {
         "symbol_days": len(d), "expected": int(expected), "missing": int(missing),
         "fraction": missing / expected if expected else None,
