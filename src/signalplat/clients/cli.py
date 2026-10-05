@@ -16,7 +16,12 @@ def _day(text: str) -> datetime:
 
 def _symbols(args: argparse.Namespace) -> list[str]:
     if args.symbols_file:
-        text = Path(args.symbols_file).read_text(encoding="utf-8")
+        path = Path(args.symbols_file)
+        if not path.exists():
+            raise SystemExit(
+                f"symbols file not found: {path} (try config/pilot_small.txt, "
+                "or pass --symbols AAPL,MSFT)")
+        text = path.read_text(encoding="utf-8")
     else:
         text = args.symbols.replace(",", "\n")
     return sorted({s.strip().upper() for s in text.splitlines() if s.strip()})
