@@ -4,13 +4,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol
 
 import pandas as pd
 
 
-class Feed(str, Enum):
+class Feed(StrEnum):
     SIP = "sip"
     IEX = "iex"
 
@@ -80,3 +80,13 @@ class SetupEngine(Protocol):
     def detect(
         self, view: PointInTimeView, ctx: MarketContext, as_of: datetime
     ) -> list[Candidate]: ...
+
+
+class ReferenceAccessor(Protocol):
+    def assets(self) -> pd.DataFrame:
+        """Active and inactive US equities: symbol, name, exchange, status, tradable."""
+        ...
+
+
+class NewsAccessor(Protocol):
+    def news(self, symbols: Sequence[str], start: datetime, end: datetime) -> list[NewsItem]: ...

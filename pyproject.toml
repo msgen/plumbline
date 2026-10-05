@@ -12,6 +12,9 @@ dev = ["pytest", "hypothesis", "import-linter", "ruff"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[project.scripts]
+signalplat = "signalplat.clients.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -38,6 +41,8 @@ name = "Rule 1: clients call managers only"
 type = "forbidden"
 source_modules = ["signalplat.clients"]
 forbidden_modules = ["signalplat.engines", "signalplat.accessors"]
+# a client reaches accessors only through a manager, which is the point
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "Rule 2: managers do not call other managers"
@@ -88,6 +93,7 @@ modules = [
   "signalplat.accessors.signal_store",
   "signalplat.accessors.experiment_store",
   "signalplat.accessors.model_store",
+  "signalplat.accessors.dataset_store",
 ]
 
 [[tool.importlinter.contracts]]
