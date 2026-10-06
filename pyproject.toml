@@ -78,6 +78,7 @@ modules = [
   "signalplat.engines.sizing",
   "signalplat.engines.analytics",
   "signalplat.engines.quality",
+  "signalplat.engines.adjust",
 ]
 
 [[tool.importlinter.contracts]]
@@ -95,6 +96,7 @@ modules = [
   "signalplat.accessors.experiment_store",
   "signalplat.accessors.model_store",
   "signalplat.accessors.dataset_store",
+  "signalplat.accessors.actions_alpaca",
 ]
 
 [[tool.importlinter.contracts]]

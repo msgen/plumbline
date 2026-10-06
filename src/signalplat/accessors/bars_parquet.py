@@ -17,7 +17,7 @@ COLUMNS = [
 
 
 class ParquetBars:
-    """Layout: bars_1d/year=YYYY/ and bars_1m/feed=F/month=YYYY-MM/, each holding part files."""
+    """Raw bars. Layout: bars_raw_1d/year=YYYY/ and bars_raw_1m/feed=F/month=YYYY-MM/ of parts."""
 
     def __init__(self, root: Path) -> None:
         self._root = Path(root)
@@ -25,24 +25,24 @@ class ParquetBars:
     def write_daily(self, df: pd.DataFrame) -> int:
         n = 0
         for year, g in df.groupby(df["timestamp"].dt.year):
-            write_part(g, self._root / "bars_1d" / f"year={year}")
+            write_part(g, self._root / "bars_raw_1d" / f"year={year}")
             n += len(g)
         return n
 
     def write_minute(self, df: pd.DataFrame, feed: Feed) -> int:
         n = 0
         for month, g in df.groupby(df["timestamp"].dt.strftime("%Y-%m")):
-            write_part(g, self._root / "bars_1m" / f"feed={feed.value}" / f"month={month}")
+            write_part(g, self._root / "bars_raw_1m" / f"feed={feed.value}" / f"month={month}")
             n += len(g)
         return n
 
     def minute_bars(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed
     ) -> pd.DataFrame:
-        return self._read(self._root / "bars_1m" / f"feed={feed.value}", symbols, start, end)
+        return self._read(self._root / "bars_raw_1m" / f"feed={feed.value}", symbols, start, end)
 
     def daily_bars(self, symbols: Sequence[str], start: datetime, end: datetime) -> pd.DataFrame:
-        return self._read(self._root / "bars_1d", symbols, start, end)
+        return self._read(self._root / "bars_raw_1d", symbols, start, end)
 
     @staticmethod
     def _read(

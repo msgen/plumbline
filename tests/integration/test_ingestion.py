@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 import pytest
 
+from signalplat.accessors.actions_alpaca import AlpacaActions
 from signalplat.accessors.bars_alpaca import AlpacaBars
 from signalplat.accessors.bars_parquet import ParquetBars
 from signalplat.accessors.dataset_store import DatasetStore
@@ -57,7 +58,7 @@ def test_bars_paginate_clamp_end_and_set_available_at():
     assert len(tr.urls) == 2 and "page_token=p2" in tr.urls[1]
     clamped = (NOW - timedelta(minutes=15)).isoformat().replace("+", "%2B").replace(":", "%3A")
     assert f"end={clamped}" in tr.urls[0]
-    assert "feed=sip" in tr.urls[0] and "adjustment=split" in tr.urls[0]
+    assert "feed=sip" in tr.urls[0] and "adjustment=raw" in tr.urls[0]
 
 
 def test_bars_empty_response_and_iex_not_clamped():
@@ -162,6 +163,7 @@ def test_select_pilot_end_to_end(tmp_path):
 
     http, _ = make_http({
         "/v2/stocks/bars": [(200, {"bars": {"BIG": b(2_000_000), "SMALL": b(1_000)}})],
+        "/v1/corporate-actions": [(200, {"corporate_actions": {}, "next_page_token": None})],
         "/v2/assets": [(200, [
             {"symbol": s, "name": f"{s} Inc", "exchange": "NYSE", "status": "active",
              "tradable": True, "class": "us_equity"} for s in ("BIG", "SMALL")]), (200, [])],
@@ -170,7 +172,7 @@ def test_select_pilot_end_to_end(tmp_path):
     mgr = IngestionManager(
         AlpacaBars(http, clock, RateLimiter(1000)), AlpacaReference(http),
         AlpacaNews(http, limiter=RateLimiter(1000)), ParquetBars(tmp_path),
-        DatasetStore(tmp_path), clock)
+        DatasetStore(tmp_path), clock, actions=AlpacaActions(http, RateLimiter(1000)))
     cfg = tmp_path / "u.yaml"
     cfg.write_text("min_price: 10\nmin_dollar_volume_20d: 50000000\nmin_atr_pct: 0.02\n")
     with pytest.raises(RuntimeError, match="reference"):
@@ -208,3 +210,20 @@ def test_other_http_errors_still_raise():
     acc = AlpacaBars(http, FixedClock(NOW), RateLimiter(1000))
     with pytest.raises(HttpError):
         acc.daily_bars(["AAA"], NOW - timedelta(days=9), NOW)
+
+
+def test_splits_parsed_to_ratios_and_fail_loudly_on_bad_shape():
+    ok = {"corporate_actions": {
+        "forward_splits": [
+            {"symbol": "AAA", "ex_date": "2026-03-02", "new_rate": 4, "old_rate": 1}],
+        "reverse_splits": [
+            {"symbol": "BBB", "ex_date": "2026-04-01", "new_rate": 1, "old_rate": 10}],
+    }, "next_page_token": None}
+    http, _ = make_http({"/v1/corporate-actions": [(200, ok)]})
+    acc = AlpacaActions(http, RateLimiter(1000))
+    df = acc.splits(["AAA", "BBB"], NOW - timedelta(days=400), NOW)
+    assert dict(zip(df["symbol"], df["ratio"], strict=True)) == {"AAA": 4.0, "BBB": 0.1}
+    bad = {"corporate_actions": {"forward_splits": [{"symbol": "AAA"}]}}
+    http, _ = make_http({"/v1/corporate-actions": [(200, bad)]})
+    with pytest.raises(KeyError, match="lacks fields"):
+        AlpacaActions(http, RateLimiter(1000)).splits(["AAA"], NOW - timedelta(days=9), NOW)

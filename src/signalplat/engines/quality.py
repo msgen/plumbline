@@ -126,6 +126,38 @@ def volume_consistency(
     return best  # type: ignore[return-value]
 
 
+def filings_coverage(
+    universe: Sequence[str], sample: Sequence[str], filings: pd.DataFrame | None
+) -> dict[str, Any]:
+    """Share of symbols with at least one stored filing, for current names and delisted ones.
+
+    A big gap between the two means catalyst data has survivorship bias.
+    """
+    have = set(filings["symbol"].unique()) if filings is not None and len(filings) else set()
+
+    def share(names: Sequence[str]) -> dict[str, Any]:
+        n = len(names)
+        k = len(set(names) & have)
+        return {"with_filings": k, "total": n, "fraction": k / n if n else None}
+
+    return {"universe": share(universe), "delisted_sample": share(sample)}
+
+
+def news_coverage(
+    news: pd.DataFrame | None, symbols: Sequence[str], days: int
+) -> dict[str, Any]:
+    """Articles per calendar day and the share of symbols with any article."""
+    if news is None or news.empty:
+        return {"articles": 0, "per_day": 0.0, "symbols_with_news": 0, "symbols": len(symbols)}
+    tagged = set(news["symbols"].explode().dropna().unique())
+    return {
+        "articles": int(news["id"].nunique()),
+        "per_day": float(news["id"].nunique() / max(days, 1)),
+        "symbols_with_news": len(set(symbols) & tagged),
+        "symbols": len(symbols),
+    }
+
+
 def evaluate_e0(metrics: dict[str, Any], gate: dict[str, float]) -> dict[str, dict[str, Any]]:
     """Turn raw metrics into pass/fail/review lines. Failing a gate never loosens it."""
 

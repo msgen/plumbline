@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from signalplat.accessors.actions_alpaca import AlpacaActions
 from signalplat.accessors.bars_alpaca import AlpacaBars
 from signalplat.accessors.bars_parquet import ParquetBars
 from signalplat.accessors.dataset_store import DatasetStore
@@ -12,6 +13,7 @@ from signalplat.accessors.filings_edgar import EdgarFilings
 from signalplat.accessors.news_alpaca import AlpacaNews
 from signalplat.accessors.reference_alpaca import AlpacaReference
 from signalplat.contracts.types import Feed
+from signalplat.engines.adjust import adjust_for_splits
 from signalplat.engines.quality import sample_delisted
 from signalplat.engines.universe import eligible_assets, select_universe
 from signalplat.utilities.clock import Clock, SystemClock
@@ -46,9 +48,10 @@ class IngestionManager:
         store: DatasetStore,
         clock: Clock,
         filings: EdgarFilings | None = None,
+        actions: AlpacaActions | None = None,
     ) -> None:
         self._bars, self._reference, self._news = bars, reference, news
-        self._filings = filings
+        self._filings, self._actions = filings, actions
         self._bars_store, self._store, self._clock = bars_store, store, clock
 
     @classmethod
@@ -73,13 +76,18 @@ class IngestionManager:
             )
         return cls(
             AlpacaBars(data, clock), AlpacaReference(trading), AlpacaNews(data),
-            ParquetBars(root), DatasetStore(root), clock, filings,
+            ParquetBars(root), DatasetStore(root), clock, filings, AlpacaActions(data),
         )
 
     @property
     def skipped_symbols(self) -> dict[str, str]:
         """Symbols the data vendor refused (usually delisted or unknown), with the reason."""
         return dict(self._bars.skipped)
+
+    @property
+    def unmapped_filing_symbols(self) -> set[str]:
+        """Symbols with no EDGAR CIK, so their filings are missing from the dataset."""
+        return set(self._filings.unmapped) if self._filings else set()
 
     def ingest_reference(self) -> int:
         df = self._reference.assets()
@@ -116,6 +124,17 @@ class IngestionManager:
                 self._news.news(symbols, a, b)))
         return total
 
+    def ingest_splits(self, symbols: Sequence[str], start: datetime, end: datetime) -> int:
+        if self._actions is None:
+            raise RuntimeError("no corporate-actions accessor configured")
+        total = 0
+        for i in range(0, len(symbols), DAILY_CHUNK):
+            chunk = list(symbols[i : i + DAILY_CHUNK])
+            key = f"splits|{start:%F}|{end:%F}|{','.join(chunk)}"
+            total += self._run(key, end, lambda c=chunk: self._store.write_splits(
+                self._actions.splits(c, start, end)))
+        return total
+
     def ingest_filings(self, symbols: Sequence[str], start: datetime, end: datetime) -> int:
         if self._filings is None:
             raise KeyError("missing required settings in .env: SEC_USER_AGENT")
@@ -136,7 +155,11 @@ class IngestionManager:
         candidates = eligible_assets(assets)
         start = as_of - timedelta(days=lookback_days)
         self.ingest_daily(candidates, start, as_of)
-        daily = self._bars_store.daily_bars(candidates, start, as_of)
+        self.ingest_splits(candidates, start, as_of)
+        # raw bars, with only the splits effective by as_of applied: no look-ahead on price
+        daily = adjust_for_splits(
+            self._bars_store.daily_bars(candidates, start, as_of),
+            self._store.read_splits(), as_of)
         return len(candidates), select_universe(daily, as_of, load_config(config_path), n)
 
     def ingest_delisted_sample(
@@ -148,6 +171,8 @@ class IngestionManager:
             raise RuntimeError("no asset list stored yet; ingest the reference data first")
         sample = sample_delisted(assets, n, seed)
         self.ingest_daily(sample, start, end)
+        if self._filings is not None:  # lets E0 measure how many delisted issuers have filings
+            self.ingest_filings(sample, start, end)
         return sample
 
     def _run(self, key: str, chunk_end: datetime, fetch) -> int:

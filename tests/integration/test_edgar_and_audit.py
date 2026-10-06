@@ -46,6 +46,7 @@ def test_edgar_filters_forms_window_and_follows_older_pages():
     acc = EdgarFilings(www, data, RateLimiter(1000, 1.0))
     df = acc.filings(["AAPL", "GONE"], datetime(2026, 6, 1, tzinfo=UTC),
                      datetime(2026, 9, 1, tzinfo=UTC))
+    assert acc.unmapped == {"GONE"}  # surfaced, not silently dropped
     assert sorted(df["accession"]) == ["a1", "a3", "old1"]  # 10-Q and out-of-window dropped
     row = df[df["accession"] == "a1"].iloc[0]
     assert row["items"] == "2.02,9.01" and row["available_at"] == row["accepted_at"]
@@ -95,7 +96,7 @@ def test_e0_end_to_end_pass_and_fail(tmp_path):
     assert res["passed"], res["verdict"]
     assert (tmp_path / "experiments" / res["run_id"] / "report.md").exists()
     run = json.loads((tmp_path / "experiments" / res["run_id"] / "run.json").read_text())
-    assert run["dataset_hashes"]["bars_1m"] and run["config_hash"]
+    assert run["dataset_hashes"]["bars_raw_1m"] and run["config_hash"]
 
     # drop 100 minutes of SIP data for a second symbol: the missing-minutes gate must fail
     bars.write_minute(_bars("BBB", "2026-10-01", n=290), Feed.SIP)

@@ -89,3 +89,15 @@ def test_evaluate_e0_statuses_and_none_handling():
     assert v["daily_vs_minute_volume"]["status"] == "n/a"
     assert v["price_jumps"]["status"] == "review"
     assert datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_filings_and_news_coverage():
+    filings = pd.DataFrame({"symbol": ["AAA", "AAA", "BBB"]})
+    c = q.filings_coverage(["AAA", "BBB", "CCC"], ["OLD1", "OLD2"], filings)
+    assert c["universe"] == {"with_filings": 2, "total": 3, "fraction": 2 / 3}
+    assert c["delisted_sample"]["with_filings"] == 0
+    assert q.filings_coverage(["AAA"], [], None)["universe"]["with_filings"] == 0
+    news = pd.DataFrame({"id": ["1", "2", "3"], "symbols": [["AAA"], ["AAA", "BBB"], []]})
+    n = q.news_coverage(news, ["AAA", "BBB", "CCC"], days=2)
+    assert n == {"articles": 3, "per_day": 1.5, "symbols_with_news": 2, "symbols": 3}
+    assert q.news_coverage(None, ["AAA"], 5)["articles"] == 0

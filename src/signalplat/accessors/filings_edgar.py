@@ -32,6 +32,8 @@ class EdgarFilings:
         self._www, self._data = www, data
         self._limiter = limiter or RateLimiter(8, 1.0)
         self._ciks: dict[str, int] | None = None
+        # Symbols with no CIK in SEC's *current* ticker map: typically delisted or renamed issuers.
+        self.unmapped: set[str] = set()
 
     def _cik_map(self) -> dict[str, int]:
         if self._ciks is None:
@@ -46,6 +48,7 @@ class EdgarFilings:
         for sym in symbols:
             cik = ciks.get(sym.upper())
             if cik is None:  # delisted or renamed tickers are absent from the current map
+                self.unmapped.add(sym)
                 continue
             frames.append(self._one(sym, cik, start, end))
         frames = [f for f in frames if not f.empty]

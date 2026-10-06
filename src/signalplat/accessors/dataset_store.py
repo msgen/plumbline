@@ -33,6 +33,9 @@ class DatasetStore:
             write_part(g, self._root / "news" / f"month={month}")
         return len(df)
 
+    def read_news(self) -> pd.DataFrame | None:
+        return read_parts(self._root / "news")
+
     def write_filings(self, df: pd.DataFrame) -> int:
         if df.empty:
             return 0
@@ -42,6 +45,15 @@ class DatasetStore:
 
     def read_filings(self) -> pd.DataFrame | None:
         return read_parts(self._root / "edgar")
+
+    def write_splits(self, df: pd.DataFrame) -> int:
+        if df.empty:
+            return 0
+        write_part(df, self._root / "corporate_actions" / "splits")
+        return len(df)
+
+    def read_splits(self) -> pd.DataFrame | None:
+        return read_parts(self._root / "corporate_actions" / "splits")
 
     # The manifest lets an interrupted backfill resume without refetching finished chunks.
     def is_done(self, key: str) -> bool:

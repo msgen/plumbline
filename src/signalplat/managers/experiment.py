@@ -10,6 +10,7 @@ from signalplat.accessors.dataset_store import DatasetStore
 from signalplat.accessors.experiment_store import ExperimentStore
 from signalplat.contracts.types import Feed
 from signalplat.engines import quality
+from signalplat.engines.adjust import adjust_for_splits
 from signalplat.utilities.clock import Clock, SystemClock
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env
@@ -52,7 +53,13 @@ class ExperimentManager:
             "volume": quality.volume_consistency(sip, daily, gate["daily_vs_minute_volume_tol"]),
             "duplicates": quality.duplicate_count(sip) + quality.duplicate_count(daily),
             "outside_hours": quality.outside_extended_hours(sip),
-            "price_jumps": quality.price_jumps(daily),
+            # raw bars show splits as jumps, so look for jumps after known splits are applied
+            "filings_coverage": quality.filings_coverage(
+                symbols, sample, self._store.read_filings()),
+            "news_coverage": quality.news_coverage(
+                self._store.read_news(), symbols, (end - start).days),
+            "price_jumps": quality.price_jumps(
+                adjust_for_splits(daily, self._store.read_splits(), end)),
         }
         verdict = quality.evaluate_e0(metrics, gate)
         failed = [k for k, v in verdict.items() if v["status"] == "fail"]
@@ -60,7 +67,8 @@ class ExperimentManager:
         record = {
             "run_id": run_id, "experiment": "E0", "config": cfg,
             "config_hash": hash_config(cfg), "code_commit": self._runs.code_commit(),
-            "dataset_hashes": self._runs.dataset_hash("bars_1d", "bars_1m", "reference", "news"),
+            "dataset_hashes": self._runs.dataset_hash(
+                "bars_raw_1d", "bars_raw_1m", "reference", "news", "corporate_actions", "edgar"),
             "window": [start, end], "symbols": symbols, "delisted_sample": sample,
             "metrics": metrics, "verdict": verdict, "passed": not failed,
         }
@@ -80,6 +88,11 @@ def render_e0(r: dict[str, Any]) -> str:
     m = r["metrics"]
     lines += ["", f"Delisted sample: {m['delisted']['present']}/{m['delisted']['sampled']} "
               f"present. Missing: {', '.join(m['delisted']['missing'][:20]) or 'none'}",
+              "", "Catalyst data coverage (informational; no gate is set yet):",
+              f"- filings, universe: {m['filings_coverage']['universe']}",
+              f"- filings, delisted sample: {m['filings_coverage']['delisted_sample']} "
+              "(a big gap means the dilution veto would be survivorship-biased)",
+              f"- news: {m['news_coverage']}",
               "", "Delisted names absent from Alpaca's asset list cannot be measured here; "
               "compare against an external list if this matters.",
               "IEX missing-minute fraction (informational): "

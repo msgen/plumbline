@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     ing.add_argument("--symbols-file", help="file with one symbol per line")
     ing.add_argument("--start", type=_day, required=True, help="YYYY-MM-DD (UTC)")
     ing.add_argument("--end", type=_day, required=True, help="YYYY-MM-DD (UTC, exclusive)")
-    steps = ["reference", "daily", "minute", "news", "filings"]
+    steps = ["reference", "daily", "splits", "minute", "news", "filings"]
     ing.add_argument("--only", nargs="+", choices=steps, default=steps)
     ing.add_argument("--delisted-sample", type=int, default=0, metavar="N",
                      help="also fetch daily bars for N sampled inactive symbols (for E0)")
@@ -75,6 +75,8 @@ def _run(args: argparse.Namespace) -> int:
             print(f"assets: {mgr.ingest_reference()}")
         if symbols and "daily" in args.only:
             print(f"daily bars: {mgr.ingest_daily(symbols, args.start, args.end)}")
+        if symbols and "splits" in args.only:
+            print(f"splits: {mgr.ingest_splits(symbols, args.start, args.end)}")
         if symbols and "minute" in args.only:
             for feed in args.feeds:
                 n = mgr.ingest_minute(symbols, args.start, args.end, Feed(feed))
@@ -87,6 +89,9 @@ def _run(args: argparse.Namespace) -> int:
             sample = mgr.ingest_delisted_sample(
                 args.delisted_sample, args.seed, args.delisted_start, args.end)
             print(f"delisted sample daily bars fetched for {len(sample)} symbols")
+        if mgr.unmapped_filing_symbols:
+            print(f"no EDGAR CIK (filings missing) for {len(mgr.unmapped_filing_symbols)} "
+                  f"symbols: {', '.join(sorted(mgr.unmapped_filing_symbols)[:30])}")
         if mgr.skipped_symbols:
             print(f"vendor rejected {len(mgr.skipped_symbols)} symbols: "
                   f"{', '.join(sorted(mgr.skipped_symbols))}")

@@ -1,4 +1,8 @@
-"""Alpaca historical bars. Returns contract frames, never vendor shapes."""
+"""Alpaca historical bars. Returns contract frames, never vendor shapes.
+
+Bars are fetched raw (unadjusted). Splits are applied later, as of a given time, by the
+adjust engine, so a split that happens after as_of can never change an earlier decision.
+"""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -67,7 +71,7 @@ class AlpacaBars:
         params = {
             "symbols": ",".join(symbols), "timeframe": timeframe,
             "start": start.isoformat(), "end": end.isoformat(),
-            "limit": 10000, "adjustment": "split", "feed": feed.value, "sort": "asc",
+            "limit": 10000, "adjustment": "raw", "feed": feed.value, "sort": "asc",
         }
         rows: list[dict] = []
         token = None
