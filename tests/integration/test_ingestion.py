@@ -136,7 +136,7 @@ def test_manager_resumes_from_manifest(tmp_path):
     recent = NOW - timedelta(minutes=5)
     mgr.ingest_minute(["AAPL"], NOW - timedelta(days=1), recent, Feed.SIP)
     assert not DatasetStore(tmp_path).is_done(
-        f"1m|sip|{(NOW - timedelta(days=1)):%F}|{recent:%F}|AAPL")
+        f"raw1|1m|sip|{(NOW - timedelta(days=1)):%F}|{recent:%F}|AAPL")
 
 
 def test_month_starts_splits_on_calendar_months():
@@ -227,3 +227,16 @@ def test_splits_parsed_to_ratios_and_fail_loudly_on_bad_shape():
     http, _ = make_http({"/v1/corporate-actions": [(200, bad)]})
     with pytest.raises(KeyError, match="lacks fields"):
         AlpacaActions(http, RateLimiter(1000)).splits(["AAA"], NOW - timedelta(days=9), NOW)
+
+
+def test_chunks_finished_under_an_older_data_version_are_refetched(tmp_path):
+    payload = {"bars": {"AAPL": [bar("2026-08-03T13:30:00Z")]}}
+    http, tr = make_http({"/v2/stocks/bars": [(200, payload)]})
+    clock = FixedClock(NOW)
+    store = DatasetStore(tmp_path)
+    mgr = IngestionManager(
+        AlpacaBars(http, clock, RateLimiter(1000)), AlpacaReference(http),
+        AlpacaNews(http, limiter=RateLimiter(1000)), ParquetBars(tmp_path), store, clock)
+    s, e = datetime(2026, 8, 1, tzinfo=UTC), datetime(2026, 9, 1, tzinfo=UTC)
+    store.mark_done("1m|iex|2026-08-01|2026-09-01|AAPL", 5)  # an entry from before raw bars
+    assert mgr.ingest_minute(["AAPL"], s, e, Feed.IEX) == 1  # not skipped

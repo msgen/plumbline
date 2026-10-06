@@ -25,6 +25,9 @@ from signalplat.utilities.logging import get_logger
 log = get_logger("ingestion")
 DAILY_CHUNK = 100
 MINUTE_CHUNK = 5
+# Bump when stored bars change meaning, so chunks finished under the old meaning are refetched.
+# raw1: bars stored unadjusted (earlier versions stored split-adjusted bars).
+DATA_VERSION = "raw1"
 SAFE_LAG = timedelta(minutes=16)  # chunks ending later may be clamped, so are not marked done
 
 
@@ -176,6 +179,7 @@ class IngestionManager:
         return sample
 
     def _run(self, key: str, chunk_end: datetime, fetch) -> int:
+        key = f"{DATA_VERSION}|{key}"
         if self._store.is_done(key):
             return 0
         rows = fetch()
