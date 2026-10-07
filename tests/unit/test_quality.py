@@ -22,19 +22,19 @@ def test_missing_minutes_counts_gaps_and_ignores_half_days():
     full = minutes("AAA", "2026-10-01")
     gappy = minutes("BBB", "2026-10-01").iloc[39:]  # 39 minutes missing
     d = pd.concat([daily("AAA", "2026-10-01"), daily("BBB", "2026-10-01")])
-    r = q.missing_regular_minutes(pd.concat([full, gappy]), d)
+    r = q.missing_regular_minutes(q.summarize_minutes(pd.concat([full, gappy])), d)
     assert r["missing"] == 39 and r["symbol_days"] == 2
     assert r["worst"] == [("BBB", "2026-10-01", 39)]  # complete days are not listed
     assert abs(r["fraction"] - 39 / 780) < 1e-9
     # early close: market-wide span is 210 minutes, so nothing is missing
     half = pd.concat([minutes("AAA", "2026-11-27", n=210), minutes("BBB", "2026-11-27", n=210)])
-    r = q.missing_regular_minutes(half, pd.concat([daily("AAA", "2026-11-27"),
-                                                   daily("BBB", "2026-11-27")]))
+    r = q.missing_regular_minutes(q.summarize_minutes(half), pd.concat(
+        [daily("AAA", "2026-11-27"), daily("BBB", "2026-11-27")]))
     assert r["missing"] == 0
 
 
 def test_day_with_no_minute_data_counts_fully_missing():
-    r = q.missing_regular_minutes(minutes("AAA", "2026-10-01").iloc[0:0],
+    r = q.missing_regular_minutes(q.summarize_minutes(minutes("AAA", "2026-10-01").iloc[0:0]),
                                   daily("AAA", "2026-10-01"))
     assert r["missing"] == 390 and r["fraction"] == 1.0
 
@@ -42,8 +42,10 @@ def test_day_with_no_minute_data_counts_fully_missing():
 def test_duplicates_and_extended_hours():
     m = minutes("AAA", "2026-10-01", n=5)
     assert q.duplicate_count(pd.concat([m, m.iloc[:2]])) == 2
-    assert q.outside_extended_hours(m) == 0
-    assert q.outside_extended_hours(minutes("AAA", "2026-10-01", start="03:00", n=10)) == 10
+    assert q.duplicate_minute_rows(q.summarize_minutes(pd.concat([m, m.iloc[:2]]))) == 2
+    assert q.outside_extended_hours(q.summarize_minutes(m)) == 0
+    early = q.summarize_minutes(minutes("AAA", "2026-10-01", start="03:00", n=10))
+    assert q.outside_extended_hours(early) == 10
 
 
 def test_price_jumps():
@@ -57,6 +59,7 @@ def test_volume_consistency_picks_matching_convention():
     reg = minutes("AAA", "2026-10-01", volume=100)  # 39,000 regular
     pre = minutes("AAA", "2026-10-01", start="08:00", n=90, volume=100)  # 9,000 premarket
     m = pd.concat([pre, reg])
+    m = q.summarize_minutes(m)
     r = q.volume_consistency(m, daily("AAA", "2026-10-01", volume=39000))
     assert r["convention"] == "regular" and r["median_rel_diff"] == 0
     r = q.volume_consistency(m, daily("AAA", "2026-10-01", volume=48000))

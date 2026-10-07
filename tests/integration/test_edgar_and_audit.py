@@ -104,3 +104,32 @@ def test_e0_end_to_end_pass_and_fail(tmp_path):
     res = mgr.run_e0(cfg, ["AAA", "BBB"], s, e)
     assert not res["passed"]
     assert res["verdict"]["missing_regular_minutes"]["status"] == "fail"
+
+
+def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
+    from signalplat.engines.quality import summarize_minutes
+
+    frames = [
+        _bars("AAA", "2026-10-01"),
+        _bars("AAA", "2026-10-02", n=210),                     # half day
+        _bars("BBB", "2026-10-01").iloc[39:],                  # gap at the open
+        _bars("BBB", "2026-10-02").assign(volume=7.0),
+    ]
+    pre = _bars("AAA", "2026-10-05")
+    pre["timestamp"] = pre["timestamp"] - pd.Timedelta(hours=7)  # starts at 02:30 New York
+    frames.append(pre)
+    df = pd.concat(frames, ignore_index=True)
+    ParquetBars(tmp_path).write_minute(df, Feed.SIP)
+    ParquetBars(tmp_path).write_minute(df.iloc[:100], Feed.SIP)  # overlapping re-fetch
+    got = ParquetBars(tmp_path).minute_summary(
+        ["AAA", "BBB"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 11, 1, tzinfo=UTC),
+        Feed.SIP)
+    want = summarize_minutes(df)
+    key = ["symbol", "day"]
+    got = got.sort_values(key).reset_index(drop=True)
+    want = want.sort_values(key).reset_index(drop=True)
+    pd.testing.assert_frame_equal(got, want, check_dtype=False, check_exact=False)
+    assert ParquetBars(tmp_path).minute_summary([], datetime(2026, 9, 1, tzinfo=UTC),
+                                                datetime(2026, 11, 1, tzinfo=UTC), Feed.SIP).empty
+    assert ParquetBars(tmp_path).minute_summary(["AAA"], datetime(2026, 9, 1, tzinfo=UTC),
+                                                datetime(2026, 11, 1, tzinfo=UTC), Feed.IEX).empty

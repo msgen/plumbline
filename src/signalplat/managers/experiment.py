@@ -15,6 +15,9 @@ from signalplat.utilities.clock import Clock, SystemClock
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env
 from signalplat.utilities.ids import hash_config
+from signalplat.utilities.logging import get_logger
+
+log = get_logger("experiment")
 
 
 class ExperimentManager:
@@ -34,8 +37,10 @@ class ExperimentManager:
     ) -> dict[str, Any]:
         cfg = load_config(config_path)
         gate = cfg["gate"]
-        sip = self._bars.minute_bars(symbols, start, end, Feed.SIP)
-        iex = self._bars.minute_bars(symbols, start, end, Feed.IEX)
+        log.info("summarising minute bars (SIP)")
+        sip = self._bars.minute_summary(symbols, start, end, Feed.SIP)
+        log.info("summarising minute bars (IEX)")
+        iex = self._bars.minute_summary(symbols, start, end, Feed.IEX)
         daily = self._bars.daily_bars(symbols, start, end)
 
         assets = self._store.read_assets()
@@ -51,7 +56,7 @@ class ExperimentManager:
             "missing_minutes": quality.missing_regular_minutes(sip, daily),
             "missing_minutes_iex": quality.missing_regular_minutes(iex, daily),
             "volume": quality.volume_consistency(sip, daily, gate["daily_vs_minute_volume_tol"]),
-            "duplicates": quality.duplicate_count(sip) + quality.duplicate_count(daily),
+            "duplicates": quality.duplicate_minute_rows(sip) + quality.duplicate_count(daily),
             "outside_hours": quality.outside_extended_hours(sip),
             # raw bars show splits as jumps, so look for jumps after known splits are applied
             "filings_coverage": quality.filings_coverage(

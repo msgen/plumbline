@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from signalplat.contracts.types import MINUTE_SUMMARY_COLUMNS
 from signalplat.utilities.clock import NY
 
 _TICKER = re.compile(r"^[A-Z]{1,5}$")  # drops escrow, CVR and CUSIP-style placeholders
@@ -38,24 +39,49 @@ def delisted_coverage(sample: Sequence[str], daily: pd.DataFrame) -> dict[str, A
     }
 
 
+def _local(bars: pd.DataFrame) -> pd.DataFrame:
+    local = bars["timestamp"].dt.tz_convert(NY)
+    return bars.assign(day=local.dt.date, mod=local.dt.hour * 60 + local.dt.minute)
+
+
+def summarize_minutes(minute: pd.DataFrame) -> pd.DataFrame:
+    """One row per symbol-day of minute-bar facts: what the E0 checks need, and nothing more.
+
+    This is the reference implementation. The production path computes the same table inside
+    DuckDB (`ParquetBars.minute_summary`) so minute rows never have to fit in memory.
+    """
+    if minute.empty:
+        return pd.DataFrame(columns=MINUTE_SUMMARY_COLUMNS)
+    m = _local(minute)
+    reg = (m["mod"] >= REGULAR_OPEN) & (m["mod"] < REGULAR_CLOSE)
+    m = m.assign(
+        reg_mod=m["mod"].where(reg),
+        vol_regular=m["volume"].where(reg, 0.0),
+        outside=((m["mod"] < EXTENDED_OPEN) | (m["mod"] >= EXTENDED_CLOSE)).astype(int),
+    )
+    g = m.groupby(["symbol", "day"])
+    out = pd.DataFrame({
+        "rows": g.size(), "timestamps": g["timestamp"].nunique(),
+        "reg_minutes": g["reg_mod"].nunique(), "reg_first": g["reg_mod"].min(),
+        "reg_last": g["reg_mod"].max(), "vol_all": g["volume"].sum(),
+        "vol_regular": g["vol_regular"].sum(), "outside": g["outside"].sum(),
+    }).reset_index()
+    return out[MINUTE_SUMMARY_COLUMNS]
+
+
 def duplicate_count(bars: pd.DataFrame) -> int:
     return int(bars.duplicated(["symbol", "timestamp"]).sum()) if len(bars) else 0
 
 
-def _local(bars: pd.DataFrame) -> pd.DataFrame:
-    local = bars["timestamp"].dt.tz_convert(NY)
-    out = bars.assign(day=local.dt.date, mod=local.dt.hour * 60 + local.dt.minute)
-    return out
+def duplicate_minute_rows(summary: pd.DataFrame) -> int:
+    return int((summary["rows"] - summary["timestamps"]).sum()) if len(summary) else 0
 
 
-def outside_extended_hours(minute: pd.DataFrame) -> int:
-    if minute.empty:
-        return 0
-    m = _local(minute)["mod"]
-    return int(((m < EXTENDED_OPEN) | (m >= EXTENDED_CLOSE)).sum())
+def outside_extended_hours(summary: pd.DataFrame) -> int:
+    return int(summary["outside"].sum()) if len(summary) else 0
 
 
-def missing_regular_minutes(minute: pd.DataFrame, daily: pd.DataFrame) -> dict[str, Any]:
+def missing_regular_minutes(summary: pd.DataFrame, daily: pd.DataFrame) -> dict[str, Any]:
     """Share of regular-session minutes missing for symbol-days that have a daily bar.
 
     The expected session each day is the market-wide first to last regular minute seen, so
@@ -64,12 +90,13 @@ def missing_regular_minutes(minute: pd.DataFrame, daily: pd.DataFrame) -> dict[s
     if daily.empty:
         return {"symbol_days": 0, "expected": 0, "missing": 0, "fraction": None, "worst": []}
     d = _local(daily)[["symbol", "day"]].drop_duplicates()
-    m = _local(minute) if len(minute) else minute.assign(day=[], mod=[])
-    reg = m[(m["mod"] >= REGULAR_OPEN) & (m["mod"] < REGULAR_CLOSE)]
-    span = reg.groupby("day")["mod"].agg(["min", "max"])
-    span["expected"] = span["max"] - span["min"] + 1
-    obs = reg.groupby(["symbol", "day"])["mod"].nunique().rename("observed")
-    d = d.join(span["expected"], on="day").join(obs, on=["symbol", "day"])
+    if len(summary):
+        span = summary.groupby("day").agg(first=("reg_first", "min"), last=("reg_last", "max"))
+        span["expected"] = span["last"] - span["first"] + 1
+        obs = summary.set_index(["symbol", "day"])["reg_minutes"].rename("observed")
+        d = d.join(span["expected"], on="day").join(obs, on=["symbol", "day"])
+    else:
+        d["expected"], d["observed"] = float("nan"), float("nan")
     d["expected"] = d["expected"].fillna(REGULAR_MINUTES)
     d["observed"] = d["observed"].fillna(0).clip(upper=d["expected"])
     d["missing"] = d["expected"] - d["observed"]
@@ -94,30 +121,27 @@ def price_jumps(daily: pd.DataFrame, threshold: float = 0.40) -> list[tuple[str,
 
 
 def volume_consistency(
-    minute: pd.DataFrame, daily: pd.DataFrame, tolerance: float = 0.02
+    summary: pd.DataFrame, daily: pd.DataFrame, tolerance: float = 0.02
 ) -> dict[str, Any]:
     """Compare daily volume with the minute total, both all-hours and regular-hours only.
 
     Which convention Alpaca's daily bar follows is unverified, so the closer one is used.
     """
-    if daily.empty or minute.empty:
-        return {"symbol_days": 0, "median_rel_diff": None, "within_tolerance": None}
-    m = _local(minute)
-    all_hours = m.groupby(["symbol", "day"])["volume"].sum().rename("all_hours")
-    regular = (
-        m[(m["mod"] >= REGULAR_OPEN) & (m["mod"] < REGULAR_CLOSE)]
-        .groupby(["symbol", "day"])["volume"].sum().rename("regular")
-    )
-    d = _local(daily)[["symbol", "day", "volume"]].join(all_hours, on=["symbol", "day"])
-    d = d.join(regular, on=["symbol", "day"]).dropna(subset=["all_hours"])
+    empty = {"symbol_days": 0, "median_rel_diff": None, "within_tolerance": None}
+    if daily.empty or summary.empty:
+        return empty
+    d = _local(daily)[["symbol", "day", "volume"]].join(
+        summary.set_index(["symbol", "day"])[["vol_all", "vol_regular"]], on=["symbol", "day"]
+    ).dropna(subset=["vol_all"])
     d = d[d["volume"] > 0]
     if d.empty:
-        return {"symbol_days": 0, "median_rel_diff": None, "within_tolerance": None}
+        return empty
     best: dict[str, Any] | None = None
-    for name in ("all_hours", "regular"):
+    for name in ("vol_all", "vol_regular"):
         rel = (d["volume"] - d[name].fillna(0)).abs() / d["volume"]
         cand = {
-            "symbol_days": len(d), "convention": name,
+            "symbol_days": len(d),
+            "convention": {"vol_all": "all_hours", "vol_regular": "regular"}[name],
             "median_rel_diff": float(rel.median()),
             "within_tolerance": float((rel <= tolerance).mean()),
         }
