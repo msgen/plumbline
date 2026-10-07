@@ -57,6 +57,7 @@ def select_universe(
     """
     t = liquidity_table(daily, as_of)
     keep = t[(t["close"] > cfg["min_price"])
+             & (t["close"] < cfg.get("max_price", float("inf")))
              & (t["dollar_volume_20d"] > cfg["min_dollar_volume_20d"])
              & (t["atr_pct"] > cfg["min_atr_pct"])]
     keep = keep.sort_values("dollar_volume_20d", ascending=False).reset_index(drop=True)
@@ -90,6 +91,7 @@ def membership(daily: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
     member = (
         (prev["count"] >= ATR_WINDOW + 1)
         & (prev["raw_close"] > cfg["min_price"])
+        & (prev["raw_close"] < cfg.get("max_price", float("inf")))
         & (prev["dv"] > cfg["min_dollar_volume_20d"])
         & (prev["atr_pct"] > cfg["min_atr_pct"])
     ).fillna(False)

@@ -107,3 +107,18 @@ def test_membership_price_rule_uses_the_price_visible_at_the_time():
     days = adj["timestamp"].dt.tz_convert("America/New_York").dt.date
     assert not m[days.iloc[25]]       # still an $8 stock then
     assert m[days.iloc[38]]           # an $80 stock after the split
+
+
+def test_max_price_caps_both_the_selection_and_the_membership():
+    from signalplat.engines.universe import membership
+
+    cfg = {**CFG, "max_price": 60.0}
+    d = pd.concat([bars("CHEAP", [50.0] * 40, volume=500_000),
+                   bars("DEAR", [500.0] * 40, highs=[520.0] * 40, lows=[480.0] * 40, volume=50_000)])
+    d["raw_close"] = d["close"]
+    as_of = datetime(2027, 1, 1, tzinfo=UTC)
+    assert list(select_universe(d, as_of, cfg)["symbol"]) == ["CHEAP"]
+    assert sorted(select_universe(d, as_of, CFG)["symbol"]) == ["CHEAP", "DEAR"]  # no cap set
+    m = membership(d, cfg)
+    last = m.groupby("symbol")["member"].last()
+    assert bool(last["CHEAP"]) and not bool(last["DEAR"])

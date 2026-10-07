@@ -14,6 +14,8 @@ Not fixed yet: EDGAR still maps tickers through the current ticker file, so deli
 no filings. Closing that needs a CIK source that covers delisted names, which E0's coverage
 numbers will size before E9.
 
+| 8 | Minute bars incomplete for expensive stocks | E0 on the 200-name pilot showed missing regular-session minutes and a minute-volume shortfall growing steadily with price (0.39% missing under $50, 24.5% above $1,000). The pattern fits minute bars skipping odd-lot trades; not confirmed. The universe now has `max_price: 50` (config/universe.yaml): a $500 position holds at least 10 whole shares, and the 0.5% gate applies to the capped universe unchanged. XTB fractional-share support is still unconfirmed; if it exists, revisit the cap. |
+
 ## To build into the engines (not written yet)
 
 **2. Expectancy must include time-outs (labeling, ranking, E12).** Every label has one of three
