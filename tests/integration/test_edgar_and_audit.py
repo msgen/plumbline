@@ -151,6 +151,12 @@ def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
     pre = _bars("AAA", "2026-10-05")
     pre["timestamp"] = pre["timestamp"] - pd.Timedelta(hours=7)  # starts at 02:30 New York
     frames.append(pre)
+    # a New York day that straddles two UTC month directories: the 20:00 bar lands in October
+    frames.append(_bars("AAA", "2026-09-30"))
+    late = _bars("AAA", "2026-09-30", n=6)
+    late["timestamp"] = pd.date_range(
+        "2026-09-30 19:55", periods=6, freq="min", tz="America/New_York").tz_convert("UTC")
+    frames.append(late)
     df = pd.concat(frames, ignore_index=True)
     ParquetBars(tmp_path).write_minute(df, Feed.SIP)
     ParquetBars(tmp_path).write_minute(df.iloc[:100], Feed.SIP)  # overlapping re-fetch
