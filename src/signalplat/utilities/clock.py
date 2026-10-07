@@ -1,7 +1,7 @@
 """Injected time source. Nothing else may read the system clock."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
@@ -47,3 +47,24 @@ def is_regular_session(ts: datetime) -> bool:
 def clamp_sip_end(end: datetime, now: datetime, minutes: int = 15) -> datetime:
     """Free-tier SIP queries must end at least `minutes` in the past."""
     return min(end, now - timedelta(minutes=minutes))
+
+
+def is_early_close(day: date) -> bool:
+    """NYSE 13:00 closes: the day after Thanksgiving, Christmas Eve, and July 3.
+
+    Rule-based for weekdays only. Days the market is shut have no bars, so they never matter.
+    """
+    if day.weekday() >= 5:
+        return False
+    if day.month == 11 and day.weekday() == 4:  # Friday after the fourth Thursday
+        return 23 <= day.day <= 29
+    if day.month == 12 and day.day == 24:
+        return True
+    if day.month == 7 and day.day == 3:  # only if July 4 is also a weekday
+        return date(day.year, 7, 4).weekday() < 5
+    return False
+
+
+def regular_close_minute(day: date) -> int:
+    """Minute of the New York day (from midnight) at which the regular session ends."""
+    return 13 * 60 if is_early_close(day) else 16 * 60

@@ -151,6 +151,7 @@ def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
     pre = _bars("AAA", "2026-10-05")
     pre["timestamp"] = pre["timestamp"] - pd.Timedelta(hours=7)  # starts at 02:30 New York
     frames.append(pre)
+    frames.append(_bars("AAA", "2026-11-27", n=330))  # early close: regular session ends 13:00
     # a New York day that straddles two UTC month directories: the 20:00 bar lands in October
     frames.append(_bars("AAA", "2026-09-30"))
     late = _bars("AAA", "2026-09-30", n=6)
@@ -161,7 +162,7 @@ def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
     ParquetBars(tmp_path).write_minute(df, Feed.SIP)
     ParquetBars(tmp_path).write_minute(df.iloc[:100], Feed.SIP)  # overlapping re-fetch
     got = ParquetBars(tmp_path).minute_summary(
-        ["AAA", "BBB"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 11, 1, tzinfo=UTC),
+        ["AAA", "BBB"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 12, 31, tzinfo=UTC),
         Feed.SIP)
     want = summarize_minutes(df)
     key = ["symbol", "day"]
@@ -169,9 +170,9 @@ def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
     want = want.sort_values(key).reset_index(drop=True)
     pd.testing.assert_frame_equal(got, want, check_dtype=False, check_exact=False)
     assert ParquetBars(tmp_path).minute_summary([], datetime(2026, 9, 1, tzinfo=UTC),
-                                                datetime(2026, 11, 1, tzinfo=UTC), Feed.SIP).empty
+                                                datetime(2026, 12, 31, tzinfo=UTC), Feed.SIP).empty
     assert ParquetBars(tmp_path).minute_summary(["AAA"], datetime(2026, 9, 1, tzinfo=UTC),
-                                                datetime(2026, 11, 1, tzinfo=UTC), Feed.IEX).empty
+                                                datetime(2026, 12, 31, tzinfo=UTC), Feed.IEX).empty
 
 
 def test_reviewed_jumps_clear_the_review_status(tmp_path):
@@ -204,3 +205,19 @@ def test_reviewed_jumps_clear_the_review_status(tmp_path):
     res = run(f'[{{symbol: AAA, day: "{day}", note: "checked: earnings"}}]')
     assert res["verdict"]["price_jumps"]["status"] == "pass"
     assert res["metrics"]["price_jumps_reviewed"] == 1
+
+
+def test_inspect_day_reports_counts_volume_and_gaps(tmp_path):
+    bars, store = ParquetBars(tmp_path), DatasetStore(tmp_path)
+    m = _bars("AAA", "2026-10-01")
+    m = m[(m.index < 100) | (m.index >= 150)].reset_index(drop=True)  # 50 minutes missing
+    bars.write_minute(m, Feed.SIP)
+    bars.write_daily(_daily("AAA", "2026-10-01", float(m["volume"].sum())))
+    mgr = ExperimentManager(bars, store, ExperimentStore(tmp_path),
+                            FixedClock(datetime(2026, 10, 5, 12, 0, tzinfo=UTC)))
+    info = mgr.inspect_day("AAA", datetime(2026, 10, 1, tzinfo=UTC))
+    assert info["regular_minute_bars"] == 340 and info["first"] == "09:30"
+    assert info["last"] == "15:59"
+    assert info["longest_gaps_regular"] == [("11:10", 50)]
+    assert info["minute_volume_regular"] == info["daily_volume"][0]
+    assert mgr.inspect_day("ZZZ", datetime(2026, 10, 1, tzinfo=UTC))["minute_bars"] == 0

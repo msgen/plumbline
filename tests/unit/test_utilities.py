@@ -70,3 +70,19 @@ def test_repo_configs_load():
     root = Path(__file__).resolve().parents[2]
     for f in (root / "config").glob("*.yaml"):
         load_config(f)
+
+
+def test_early_close_days():
+    from datetime import date
+
+    from signalplat.utilities.clock import is_early_close, regular_close_minute
+
+    for d in (date(2023, 11, 24), date(2024, 7, 3), date(2024, 11, 29), date(2024, 12, 24),
+              date(2025, 7, 3), date(2025, 11, 28), date(2025, 12, 24), date(2026, 11, 27),
+              date(2026, 12, 24), date(2022, 11, 25), date(2023, 7, 3)):
+        assert is_early_close(d), d
+    for d in (date(2026, 7, 3), date(2024, 12, 23), date(2020, 7, 2), date(2025, 11, 21),
+              date(2024, 11, 22), date(2023, 12, 24)):
+        assert not is_early_close(d), d
+    assert regular_close_minute(date(2024, 11, 29)) == 780
+    assert regular_close_minute(date(2024, 11, 27)) == 960

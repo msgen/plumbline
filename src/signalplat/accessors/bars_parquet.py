@@ -2,19 +2,26 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
 import pandas as pd
 
 from signalplat.contracts.types import MINUTE_SUMMARY_COLUMNS, Feed
+from signalplat.utilities.clock import is_early_close
 from signalplat.utilities.parquet import read_parts, write_part
 
 COLUMNS = [
     "symbol", "timestamp", "open", "high", "low", "close",
     "volume", "vwap", "trade_count", "available_at",
 ]
+
+
+def _early_close_days(start: datetime, end: datetime) -> list[date]:
+    """Early-close dates in the window; never empty, so DuckDB can type the list."""
+    days = [start.date() + timedelta(n) for n in range((end - start).days + 2)]
+    return [d for d in days if is_early_close(d)] or [date(1900, 1, 1)]
 
 
 _SUMMARY_SQL = """
@@ -34,7 +41,8 @@ _SUMMARY_SQL = """
         FROM local
     ),
     g AS (
-        SELECT *, (mod >= 570 AND mod < 960) AS reg FROM f
+        SELECT *, (mod >= 570
+                AND mod < CASE WHEN list_contains(?, day) THEN 780 ELSE 960 END) AS reg FROM f
     )
     SELECT symbol, day,
            count(*) AS rows,
@@ -94,13 +102,14 @@ class ParquetBars:
             return pd.DataFrame(columns=MINUTE_SUMMARY_COLUMNS)
         marks = ",".join("?" for _ in symbols)
         sql = _SUMMARY_SQL.replace("{marks}", marks)
+        early = _early_close_days(start, end)
         parts = []
         con = duckdb.connect()
         try:
             con.execute("SET preserve_insertion_order = false")  # lets DuckDB stream and spill
             for month in months:
                 glob = str(month / "part-*.parquet")
-                parts.append(con.execute(sql, [glob, *symbols, start, end]).df())
+                parts.append(con.execute(sql, [glob, *symbols, start, end, early]).df())
         finally:
             con.close()
         parts = [p for p in parts if not p.empty]

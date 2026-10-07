@@ -1,7 +1,7 @@
 """Experiment manager: the sequence of a run (load data, compute, gate, report, store)."""
 from __future__ import annotations
 
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +12,7 @@ from signalplat.contracts.types import Feed
 from signalplat.engines import quality
 from signalplat.engines.adjust import adjust_for_splits
 from signalplat.engines.universe import membership
-from signalplat.utilities.clock import Clock, SystemClock
+from signalplat.utilities.clock import NY, Clock, SystemClock, regular_close_minute
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env
 from signalplat.utilities.ids import hash_config
@@ -32,6 +32,30 @@ class ExperimentManager:
         env = env if env is not None else load_env()
         root = Path(env.get("DATA_DIR", "./data"))
         return cls(ParquetBars(root), DatasetStore(root), ExperimentStore(root), SystemClock())
+
+    def inspect_day(self, symbol: str, day: datetime, feed: Feed = Feed.SIP) -> dict[str, Any]:
+        """Facts about one symbol-day of stored bars, to judge a suspicious audit row by eye."""
+        lo, hi = day - timedelta(hours=6), day + timedelta(hours=30)  # covers the NY day
+        minute = self._bars.minute_bars([symbol], lo, hi, feed)
+        daily = self._bars.daily_bars([symbol], day - timedelta(days=1), day + timedelta(days=2))
+        if minute.empty:
+            return {"symbol": symbol, "day": str(day.date()), "minute_bars": 0,
+                    "daily_bars": daily[["timestamp", "close", "volume"]].to_dict("records")}
+        local = minute["timestamp"].dt.tz_convert(NY)
+        minute = minute[local.dt.date == day.date()]
+        mod = (local.dt.hour * 60 + local.dt.minute)[minute.index]
+        reg = (mod >= 570) & (mod < regular_close_minute(day.date()))
+        return {
+            "symbol": symbol, "day": str(day.date()), "feed": feed.value,
+            "minute_bars": len(minute), "regular_minute_bars": int(reg.sum()),
+            "first": f"{mod.min() // 60:02d}:{mod.min() % 60:02d}",
+            "last": f"{mod.max() // 60:02d}:{mod.max() % 60:02d}",
+            "minute_volume_all": float(minute["volume"].sum()),
+            "minute_volume_regular": float(minute.loc[reg, "volume"].sum()),
+            "daily_volume": [float(v) for v in daily["volume"]],
+            "trades_regular": float(minute.loc[reg, "trade_count"].sum()),
+            "longest_gaps_regular": quality.minute_gaps(mod[reg].tolist()),
+        }
 
     def run_e0(
         self, config_path: str | Path, symbols: list[str], start: datetime, end: datetime
@@ -129,7 +153,10 @@ def render_e0(r: dict[str, Any]) -> str:
               "(universe days):",
               *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_trades_per_minute"].items()],
               f"Price jumps outside the universe (not listed): {m['price_jumps_outside_universe']}",
-              "", "Worst symbol-days for missing minutes (symbol, day, minutes):",
+              "", "Days with over 10% of minutes missing, volume check (do the empty minutes carry "
+              f"volume?): {m['missing_minutes']['gappy_days_volume']}",
+              "", "Worst symbol-days for missing minutes (symbol, day, minutes missing, "
+              "volume gap vs daily bar):",
               *[f"- {w}" for w in m["missing_minutes"]["worst"]],
               "", f"Price jumps over 40% still needing review ({len(m['price_jumps'])}; "
               f"{m['price_jumps_reviewed']} already marked reviewed in the config):",

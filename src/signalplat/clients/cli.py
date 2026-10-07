@@ -49,6 +49,10 @@ def build_parser() -> argparse.ArgumentParser:
     pil.add_argument("--n", type=int, default=200)
     pil.add_argument("--config", default="config/universe.yaml")
     pil.add_argument("--out", default="config/pilot.txt")
+    ins = sub.add_parser("inspect", help="show stored bars facts for one symbol and day")
+    ins.add_argument("symbol")
+    ins.add_argument("day", type=_day, help="YYYY-MM-DD (New York trading day)")
+    ins.add_argument("--feed", choices=[f.value for f in Feed], default="sip")
     aud = sub.add_parser("audit", help="run the E0 data audit on stored data")
     aud.add_argument("--symbols", default="", help="comma-separated symbols")
     aud.add_argument("--symbols-file", help="file with one symbol per line")
@@ -101,6 +105,11 @@ def _run(args: argparse.Namespace) -> int:
         Path(args.out).write_text("\n".join(table["symbol"]) + "\n", encoding="utf-8")
         print(f"{checked} eligible symbols checked, {len(table)} written to {args.out}")
         print(table.head(10).to_string(index=False))
+    elif args.command == "inspect":
+        info = ExperimentManager.from_env().inspect_day(
+            args.symbol.upper(), args.day, Feed(args.feed))
+        for key, value in info.items():
+            print(f"{key}: {value}")
     elif args.command == "audit":
         result = ExperimentManager.from_env().run_e0(
             args.config, _symbols(args), args.start, args.end)

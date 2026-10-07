@@ -9,7 +9,7 @@ from typing import Any
 import pandas as pd
 
 from signalplat.contracts.types import MINUTE_SUMMARY_COLUMNS
-from signalplat.utilities.clock import NY
+from signalplat.utilities.clock import NY, is_early_close, regular_close_minute
 
 _TICKER = re.compile(r"^[A-Z]{1,5}$")  # drops escrow, CVR and CUSIP-style placeholders
 MAJOR_EXCHANGES = ("NYSE", "NASDAQ", "AMEX", "ARCA", "BATS")
@@ -53,7 +53,8 @@ def summarize_minutes(minute: pd.DataFrame) -> pd.DataFrame:
     if minute.empty:
         return pd.DataFrame(columns=MINUTE_SUMMARY_COLUMNS)
     m = _local(minute)
-    reg = (m["mod"] >= REGULAR_OPEN) & (m["mod"] < REGULAR_CLOSE)
+    close = m["day"].map(regular_close_minute)  # 13:00 on early-close days
+    reg = (m["mod"] >= REGULAR_OPEN) & (m["mod"] < close)
     m = m.assign(
         reg_mod=m["mod"].where(reg),
         vol_regular=m["volume"].where(reg, 0.0),
@@ -70,6 +71,14 @@ def summarize_minutes(minute: pd.DataFrame) -> pd.DataFrame:
         "outside": g["outside"].sum(), "boundary": g["boundary"].sum(),
     }).reset_index()
     return out[MINUTE_SUMMARY_COLUMNS]
+
+
+def minute_gaps(minutes_of_day: Sequence[int], top: int = 5) -> list[tuple[str, int]]:
+    """Longest runs of absent minutes between the first and last bar: (start HH:MM, length)."""
+    ms = sorted(set(minutes_of_day))
+    gaps = [(a + 1, b - a - 1) for a, b in zip(ms, ms[1:], strict=False) if b - a > 1]
+    gaps.sort(key=lambda g: -g[1])
+    return [(f"{start // 60:02d}:{start % 60:02d}", n) for start, n in gaps[:top]]
 
 
 def duplicate_count(bars: pd.DataFrame) -> int:
@@ -104,7 +113,7 @@ def missing_regular_minutes(
     """
     if daily.empty:
         return {"symbol_days": 0, "expected": 0, "missing": 0, "fraction": None, "worst": []}
-    d = _local(daily)[["symbol", "day"]].drop_duplicates()
+    d = _local(daily)[["symbol", "day", "volume"]].drop_duplicates(["symbol", "day"])
     if len(summary):
         span = summary.groupby("day").agg(first=("reg_first", "min"), last=("reg_last", "max"))
         span["expected"] = span["last"] - span["first"] + 1
@@ -112,13 +121,15 @@ def missing_regular_minutes(
         d = d.join(span["expected"], on="day").join(obs, on=["symbol", "day"])
     else:
         d["expected"], d["observed"] = float("nan"), float("nan")
-    d["expected"] = d["expected"].fillna(REGULAR_MINUTES)
+    fallback = d["day"].map(lambda x: 210 if is_early_close(x) else REGULAR_MINUTES)
+    d["expected"] = d["expected"].fillna(fallback)
     d["observed"] = d["observed"].fillna(0).clip(upper=d["expected"])
     d["missing"] = d["expected"] - d["observed"]
     if len(summary):
-        d = d.join(summary.set_index(["symbol", "day"])["trades_regular"], on=["symbol", "day"])
+        cols = ["trades_regular", "vol_all", "vol_regular"]
+        d = d.join(summary.set_index(["symbol", "day"])[cols], on=["symbol", "day"])
     else:
-        d["trades_regular"] = 0.0
+        d["trades_regular"], d["vol_all"], d["vol_regular"] = 0.0, float("nan"), float("nan")
     all_expected, all_missing = float(d["expected"].sum()), float(d["missing"].sum())
     if members is not None:
         keep = members.loc[members["member"], ["symbol", "day"]]
@@ -132,14 +143,27 @@ def missing_regular_minutes(
                      "missing_fraction": float(g["missing"].sum() / g["expected"].sum())}
         for label, g in d.groupby(bucket, observed=True) if g["expected"].sum() > 0
     }
+    # Do the missing minutes carry volume? If the minute bars still add up to the daily volume,
+    # the empty minutes had no trades; if not, trades were lost somewhere in the download.
+    best = d[["vol_all", "vol_regular"]].sub(d["volume"], axis=0).abs().min(axis=1)
+    d["vol_gap"] = best / d["volume"].where(d["volume"] > 0)
+    gappy = d[(d["missing"] / d["expected"].clip(lower=1)) > 0.10]
+    gappy_volume = {"days": int(len(gappy))}
+    if len(gappy):
+        gappy_volume.update({
+            "median_rel_diff": float(gappy["vol_gap"].median()),
+            "share_within_2pct": float((gappy["vol_gap"] <= 0.02).mean()),
+        })
     worst = d[d["missing"] > 0].sort_values("missing", ascending=False).head(10)
     return {
         "symbol_days": len(d), "expected": int(expected), "missing": int(missing),
+        "gappy_days_volume": gappy_volume,
         "fraction": missing / expected if expected else None,
         "fraction_all": all_missing / all_expected if all_expected else None,
         "scope": "universe days" if members is not None else "all days",
         "by_trades_per_minute": by_density,
-        "worst": [(r.symbol, str(r.day), int(r.missing)) for r in worst.itertuples()],
+        "worst": [(r.symbol, str(r.day), int(r.missing), round(float(r.vol_gap), 3))
+                  for r in worst.itertuples()],
     }
 
 

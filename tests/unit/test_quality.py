@@ -24,7 +24,7 @@ def test_missing_minutes_counts_gaps_and_ignores_half_days():
     d = pd.concat([daily("AAA", "2026-10-01"), daily("BBB", "2026-10-01")])
     r = q.missing_regular_minutes(q.summarize_minutes(pd.concat([full, gappy])), d)
     assert r["missing"] == 39 and r["symbol_days"] == 2
-    assert r["worst"] == [("BBB", "2026-10-01", 39)]  # complete days are not listed
+    assert [w[:3] for w in r["worst"]] == [("BBB", "2026-10-01", 39)]  # only days with gaps
     assert abs(r["fraction"] - 39 / 780) < 1e-9
     # early close: market-wide span is 210 minutes, so nothing is missing
     half = pd.concat([minutes("AAA", "2026-11-27", n=210), minutes("BBB", "2026-11-27", n=210)])
@@ -135,3 +135,29 @@ def test_price_jumps_only_on_universe_days_when_members_given():
     assert len(q.price_jumps(d, members=yes)) == 1
     assert q.price_jumps(d, members=no) == []
     assert len(q.price_jumps(d)) == 1
+
+
+def test_early_close_day_uses_the_13_00_session_end():
+    # 2026-11-27 closes at 13:00. Extended-hours prints until 15:00 must not stretch the session.
+    a = minutes("AAA", "2026-11-27", n=330)  # 09:30 to 15:00
+    b = minutes("BBB", "2026-11-27", n=210)  # 09:30 to 13:00
+    d = pd.concat([daily("AAA", "2026-11-27"), daily("BBB", "2026-11-27")])
+    s = q.summarize_minutes(pd.concat([a, b]))
+    assert list(s.sort_values("symbol")["reg_minutes"]) == [210, 210]
+    r = q.missing_regular_minutes(s, d)
+    assert r["missing"] == 0 and r["expected"] == 420
+
+
+def test_volume_check_tells_sparse_trading_from_lost_trades():
+    # same 300 missing minutes: in one case the bars still add up to the daily volume
+    kept = minutes("KEEP", "2026-10-01", volume=100).iloc[:90]
+    lost = minutes("LOST", "2026-10-01", volume=100).iloc[:90]
+    full = minutes("FULL", "2026-10-01", volume=100)
+    d = pd.concat([daily("KEEP", "2026-10-01", volume=9000),    # matches the 90 bars
+                   daily("LOST", "2026-10-01", volume=39000),   # as if all 390 had traded
+                   daily("FULL", "2026-10-01", volume=39000)])
+    r = q.missing_regular_minutes(q.summarize_minutes(pd.concat([kept, lost, full])), d)
+    assert r["gappy_days_volume"]["days"] == 2
+    assert r["gappy_days_volume"]["share_within_2pct"] == 0.5
+    by_symbol = {w[0]: w[3] for w in r["worst"]}
+    assert by_symbol["KEEP"] == 0.0 and by_symbol["LOST"] > 0.5
