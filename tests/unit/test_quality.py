@@ -161,3 +161,15 @@ def test_volume_check_tells_sparse_trading_from_lost_trades():
     assert r["gappy_days_volume"]["share_within_2pct"] == 0.5
     by_symbol = {w[0]: w[3] for w in r["worst"]}
     assert by_symbol["KEEP"] == 0.0 and by_symbol["LOST"] > 0.5
+
+
+def test_gaps_are_broken_down_by_price_and_symbol():
+    cheap = minutes("CHEAP", "2026-10-01")                       # full day at $10
+    dear = minutes("DEAR", "2026-10-01").iloc[:60]               # mostly empty at $2,000
+    d = pd.concat([daily("CHEAP", "2026-10-01", close=10.0, volume=39000),
+                   daily("DEAR", "2026-10-01", close=2000.0, volume=39000)])
+    r = q.missing_regular_minutes(q.summarize_minutes(pd.concat([cheap, dear])), d)
+    assert r["by_price"]["<50"]["missing_fraction"] == 0.0
+    assert r["by_price"][">1000"]["missing_fraction"] == 330 / 390
+    assert r["worst_symbols"][0][0] == "DEAR" and r["worst_symbols"][0][2] == 2000.0
+    assert set(r["per_symbol_fraction_quantiles"]) == {"p50", "p90", "p99"}

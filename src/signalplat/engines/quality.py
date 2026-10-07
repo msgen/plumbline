@@ -113,7 +113,8 @@ def missing_regular_minutes(
     """
     if daily.empty:
         return {"symbol_days": 0, "expected": 0, "missing": 0, "fraction": None, "worst": []}
-    d = _local(daily)[["symbol", "day", "volume"]].drop_duplicates(["symbol", "day"])
+    d = _local(daily)[["symbol", "day", "volume", "close"]].drop_duplicates(["symbol", "day"])
+    d = d.rename(columns={"close": "price"})
     if len(summary):
         span = summary.groupby("day").agg(first=("reg_first", "min"), last=("reg_last", "max"))
         span["expected"] = span["last"] - span["first"] + 1
@@ -154,10 +155,32 @@ def missing_regular_minutes(
             "median_rel_diff": float(gappy["vol_gap"].median()),
             "share_within_2pct": float((gappy["vol_gap"] <= 0.02).mean()),
         })
+    # Where do the gaps live? By price (odd-lot trades do not build bars, and at high prices
+    # nearly every trade is an odd lot) and by symbol.
+    price_bins = pd.cut(d["price"], [0, 50, 100, 250, 1000, float("inf")],
+                        labels=["<50", "50-100", "100-250", "250-1000", ">1000"])
+    by_price = {
+        str(label): {
+            "symbol_days": int(len(g)),
+            "missing_fraction": float(g["missing"].sum() / g["expected"].sum()),
+            "median_volume_gap": float(g["vol_gap"].median()),
+        }
+        for label, g in d.groupby(price_bins, observed=True) if g["expected"].sum() > 0
+    }
+    per_symbol = d.groupby("symbol").agg(
+        missing=("missing", "sum"), expected=("expected", "sum"), price=("price", "median"))
+    per_symbol["fraction"] = per_symbol["missing"] / per_symbol["expected"]
+    top_symbols = per_symbol.sort_values("fraction", ascending=False).head(10)
+    symbol_quantiles = per_symbol["fraction"].quantile([0.5, 0.9, 0.99]).round(4).to_dict()
     worst = d[d["missing"] > 0].sort_values("missing", ascending=False).head(10)
     return {
         "symbol_days": len(d), "expected": int(expected), "missing": int(missing),
         "gappy_days_volume": gappy_volume,
+        "by_price": by_price,
+        "per_symbol_fraction_quantiles": {f"p{int(k * 100)}": v
+                                          for k, v in symbol_quantiles.items()},
+        "worst_symbols": [(sym, round(float(r.fraction), 4), round(float(r.price), 1))
+                          for sym, r in top_symbols.iterrows()],
         "fraction": missing / expected if expected else None,
         "fraction_all": all_missing / all_expected if all_expected else None,
         "scope": "universe days" if members is not None else "all days",

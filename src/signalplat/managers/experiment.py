@@ -153,6 +153,12 @@ def render_e0(r: dict[str, Any]) -> str:
               "(universe days):",
               *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_trades_per_minute"].items()],
               f"Price jumps outside the universe (not listed): {m['price_jumps_outside_universe']}",
+              "", "Missing-minute fraction by raw daily close (universe days):",
+              *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_price"].items()],
+              "Per-symbol missing fraction quantiles: "
+              f"{m['missing_minutes']['per_symbol_fraction_quantiles']}",
+              "Symbols with the highest missing fraction (symbol, fraction, median price): "
+              f"{m['missing_minutes']['worst_symbols']}",
               "", "Days with over 10% of minutes missing, volume check (do the empty minutes carry "
               f"volume?): {m['missing_minutes']['gappy_days_volume']}",
               "", "Worst symbol-days for missing minutes (symbol, day, minutes missing, "
