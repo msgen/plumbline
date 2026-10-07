@@ -1,7 +1,9 @@
 min_price: 10.0
-# A $500 position should hold at least 10 whole shares (XTB fractional shares are unconfirmed).
-# E0 also found minute bars complete only for cheap stocks: gaps grow steadily with price.
-max_price: 50.0
+# max_price: 50.0   # optional hard cap on the universe; unset on purpose (see amendment 8)
+# E0 found minute bars complete only for cheap stocks: gaps grow steadily with price. The
+# completeness gate is measured on stocks below this price; pricier ones stay in the universe
+# and are reported separately.
+complete_bars_max_price: 50.0
 min_dollar_volume_20d: 50000000
 min_atr_pct: 0.02
 max_spread_pct: 0.0010

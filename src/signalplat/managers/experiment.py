@@ -79,7 +79,13 @@ class ExperimentManager:
         # Gates apply to the point-in-time universe, so judge each day on earlier bars only.
         daily_adj = adjust_for_splits(
             daily.assign(raw_close=daily["close"]), self._store.read_splits(), end)
-        members = membership(daily_adj, load_config(cfg["universe_config"]))
+        ucfg = load_config(cfg["universe_config"])
+        members = membership(daily_adj, ucfg)
+        # Minute bars skip odd-lot trades, so they are complete only for cheaper stocks. The
+        # completeness gate covers universe days below this price; the rest is reported.
+        cap = ucfg.get("complete_bars_max_price")
+        gated = members if cap is None else members.assign(
+            member=members["member"] & (members["price"] < cap))
         all_jumps = quality.price_jumps(daily_adj)
         listed = quality.price_jumps(daily_adj, members=members)
         reviewed = {(r["symbol"], str(r["day"])) for r in cfg.get("reviewed_jumps") or []}
@@ -88,8 +94,10 @@ class ExperimentManager:
 
         metrics = {
             "delisted": quality.delisted_coverage(sample, delisted_daily),
-            "missing_minutes": quality.missing_regular_minutes(sip, daily, members),
-            "missing_minutes_iex": quality.missing_regular_minutes(iex, daily, members),
+            "missing_minutes": quality.missing_regular_minutes(sip, daily, gated),
+            "missing_minutes_full": quality.missing_regular_minutes(sip, daily, members),
+            "missing_minutes_iex": quality.missing_regular_minutes(iex, daily, gated),
+            "complete_bars_max_price": cap,
             "volume": quality.volume_consistency(sip, daily, gate["daily_vs_minute_volume_tol"]),
             "duplicates": quality.duplicate_minute_rows(sip) + quality.duplicate_count(daily),
             "outside_hours": quality.outside_extended_hours(sip),
@@ -130,7 +138,10 @@ def render_e0(r: dict[str, Any]) -> str:
             f"{v['value']:.4f}" if isinstance(v["value"], float) else v["value"])
         lines.append(f"| {name} | {val} | {v['op']} {v['threshold']} | {v['status']} |")
     m = r["metrics"]
-    lines += ["", f"Delisted sample: {m['delisted']['present']}/{m['delisted']['sampled']} "
+    cap = m.get("complete_bars_max_price")
+    lines += ["", "Missing-minute gate covers universe days "
+              + (f"priced below ${cap:g}." if cap else "at any price."), "",
+              f"Delisted sample: {m['delisted']['present']}/{m['delisted']['sampled']} "
               f"present. Missing: {', '.join(m['delisted']['missing'][:20]) or 'none'}",
               "", "Catalyst data coverage (informational; no gate is set yet):",
               f"- filings, universe: {m['filings_coverage']['universe']}",
@@ -151,16 +162,19 @@ def render_e0(r: dict[str, Any]) -> str:
               f"{m['outside_hours_examples']}",
               "Missing-minute fraction by regular-session trades per minute "
               "(universe days):",
-              *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_trades_per_minute"].items()],
+              *[f"- {k}: {v}"
+                for k, v in m["missing_minutes_full"]["by_trades_per_minute"].items()],
               f"Price jumps outside the universe (not listed): {m['price_jumps_outside_universe']}",
-              "", "Missing-minute fraction by raw daily close (universe days):",
-              *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_price"].items()],
+              "", "Whole universe, any price (informational): missing fraction "
+              f"{m['missing_minutes_full']['fraction']}",
+              "Missing-minute fraction by raw daily close (universe days):",
+              *[f"- {k}: {v}" for k, v in m["missing_minutes_full"]["by_price"].items()],
               "Per-symbol missing fraction quantiles: "
-              f"{m['missing_minutes']['per_symbol_fraction_quantiles']}",
+              f"{m['missing_minutes_full']['per_symbol_fraction_quantiles']}",
               "Symbols with the highest missing fraction (symbol, fraction, median price): "
-              f"{m['missing_minutes']['worst_symbols']}",
+              f"{m['missing_minutes_full']['worst_symbols']}",
               "", "Days with over 10% of minutes missing, volume check (do the empty minutes carry "
-              f"volume?): {m['missing_minutes']['gappy_days_volume']}",
+              f"volume?): {m['missing_minutes_full']['gappy_days_volume']}",
               "", "Worst symbol-days for missing minutes (symbol, day, minutes missing, "
               "volume gap vs daily bar):",
               *[f"- {w}" for w in m["missing_minutes"]["worst"]],

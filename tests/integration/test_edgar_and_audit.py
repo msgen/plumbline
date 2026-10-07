@@ -79,7 +79,7 @@ def _daily(symbol, day, volume):
         "available_at": [ts + pd.Timedelta("1D")]})
 
 
-def _history(symbol, days, minutes_per_day, volume_per_minute=100):
+def _history(symbol, days, minutes_per_day, volume_per_minute=100, price=50.0):
     """Liquid-looking daily bars plus regular-session minute bars for each day."""
     minute, daily = [], []
     for d in days:
@@ -87,8 +87,9 @@ def _history(symbol, days, minutes_per_day, volume_per_minute=100):
         minute.append(m)
         ts = pd.Timestamp(f"{d:%Y-%m-%d} 00:00", tz="America/New_York").tz_convert("UTC")
         daily.append(pd.DataFrame({
-            "symbol": [symbol], "timestamp": [ts], "open": 50.0, "high": 52.0, "low": 48.0,
-            "close": 50.0, "volume": float(m["volume"].sum()), "vwap": 50.0, "trade_count": 5,
+            "symbol": [symbol], "timestamp": [ts], "open": price, "high": price * 1.04,
+            "low": price * 0.96, "close": price, "volume": float(m["volume"].sum()),
+            "vwap": 50.0, "trade_count": 5,
             "available_at": [ts + pd.Timedelta("1D")]}))
     return pd.concat(minute, ignore_index=True), pd.concat(daily, ignore_index=True)
 
@@ -221,3 +222,34 @@ def test_inspect_day_reports_counts_volume_and_gaps(tmp_path):
     assert info["longest_gaps_regular"] == [("11:10", 50)]
     assert info["minute_volume_regular"] == info["daily_volume"][0]
     assert mgr.inspect_day("ZZZ", datetime(2026, 10, 1, tzinfo=UTC))["minute_bars"] == 0
+
+
+def test_expensive_stocks_stay_in_the_universe_but_not_in_the_completeness_gate(tmp_path):
+    bars, store = ParquetBars(tmp_path), DatasetStore(tmp_path)
+    days = pd.bdate_range("2026-08-03", periods=30)
+    for sym, minutes, price in (("CHEAP", 390, 40.0), ("DEAR", 100, 500.0)):
+        m, d = _history(sym, days, minutes, price=price)
+        bars.write_minute(m, Feed.SIP)
+        bars.write_daily(d)
+    store.write_assets(pd.DataFrame({
+        "symbol": ["DAA"], "name": "n", "exchange": "NYSE", "status": "inactive",
+        "tradable": False, "asset_class": "us_equity"}))
+    universe = tmp_path / "universe.yaml"
+    universe.write_text("min_price: 10\nmin_dollar_volume_20d: 1000\nmin_atr_pct: 0.01\n"
+                        "complete_bars_max_price: 100\n")
+    cfg = tmp_path / "e0.yaml"
+    cfg.write_text(
+        "gate: {delisted_present_min: 0.0, missing_regular_minutes_max: 0.005,"
+        " daily_vs_minute_volume_tol: 0.9}\ndelisted_sample: 1\nseed: 1\n"
+        f"delisted_start: 2016-01-01\nuniverse_config: {universe}\n")
+    mgr = ExperimentManager(bars, store, ExperimentStore(tmp_path),
+                            FixedClock(datetime(2026, 10, 5, 12, 0, tzinfo=UTC)))
+    res = mgr.run_e0(cfg, ["CHEAP", "DEAR"], datetime(2026, 8, 1, tzinfo=UTC),
+                     datetime(2026, 10, 5, tzinfo=UTC))
+    gate, full = res["metrics"]["missing_minutes"], res["metrics"]["missing_minutes_full"]
+    assert res["verdict"]["missing_regular_minutes"]["status"] == "pass"
+    assert gate["fraction"] == 0.0                       # cheap stock only
+    assert full["fraction"] > 0.3                        # DEAR is in the universe, and gappy
+    assert "250-1000" in full["by_price"]
+    assert "priced below $100" in (tmp_path / "experiments" / res["run_id"] / "report.md"
+                                   ).read_text()

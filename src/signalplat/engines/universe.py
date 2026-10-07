@@ -69,7 +69,7 @@ def membership(daily: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
 
     Day t is judged on data through the previous bar's close. The price rule uses `raw_close`
     (the price level actually visible then); dollar volume and ATR% are unaffected by splits,
-    so they use the adjusted columns. Returns symbol, day (New York date) and member.
+    so they use the adjusted columns. Returns symbol, day (New York date), member and price.
     """
     d = daily.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
     g = d.groupby("symbol", sort=False)
@@ -96,4 +96,7 @@ def membership(daily: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
         & (prev["atr_pct"] > cfg["min_atr_pct"])
     ).fillna(False)
     day = d["timestamp"].dt.tz_convert("America/New_York").dt.date
-    return pd.DataFrame({"symbol": d["symbol"], "day": day, "member": member})
+    return pd.DataFrame({
+        "symbol": d["symbol"], "day": day, "member": member,
+        "price": prev["raw_close"],  # the price level visible before the day began
+    })
