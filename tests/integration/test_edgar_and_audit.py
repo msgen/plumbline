@@ -253,3 +253,55 @@ def test_expensive_stocks_stay_in_the_universe_but_not_in_the_completeness_gate(
     assert "250-1000" in full["by_price"]
     assert "priced below $100" in (tmp_path / "experiments" / res["run_id"] / "report.md"
                                    ).read_text()
+
+
+def test_opening_volume_matches_a_pandas_calculation(tmp_path):
+    df = pd.concat([_bars("AAA", "2026-10-01"), _bars("AAA", "2026-10-02")], ignore_index=True)
+    df["volume"] = range(1, len(df) + 1)
+    df["vwap"] = 10.0 + (df["volume"] % 7) / 10
+    ParquetBars(tmp_path).write_minute(df, Feed.SIP)
+    ParquetBars(tmp_path).write_minute(df.iloc[:50], Feed.SIP)  # overlapping re-fetch
+    got = ParquetBars(tmp_path).opening_volume(
+        ["AAA"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC), Feed.SIP,
+        [575, 600])
+    local = df["timestamp"].dt.tz_convert("America/New_York")
+    df = df.assign(day=local.dt.date, mod=local.dt.hour * 60 + local.dt.minute)
+    for minute, lab in ((575, "0935"), (600, "1000")):
+        sel = df[(df["mod"] >= 570) & (df["mod"] < minute)]
+        want_v = sel.groupby("day")["volume"].sum()
+        want_pv = (sel["vwap"] * sel["volume"]).groupby(sel["day"]).sum()
+        g = got.set_index("day")
+        assert list(g[f"v_{lab}"]) == list(want_v)
+        assert all(abs(a - b) < 1e-6 for a, b in zip(g[f"pv_{lab}"], want_pv, strict=True))
+    assert ParquetBars(tmp_path).opening_volume(
+        ["AAA"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC), Feed.IEX,
+        [575]).empty
+
+
+def test_e1_end_to_end(tmp_path):
+    bars, store = ParquetBars(tmp_path), DatasetStore(tmp_path)
+    days = pd.bdate_range("2026-08-03", periods=30)
+    for feed, per_minute in ((Feed.SIP, 100), (Feed.IEX, 10)):  # IEX sees a tenth of the volume
+        m, d = _history("AAA", days, 390, volume_per_minute=per_minute)
+        busy = m["timestamp"].dt.tz_convert("America/New_York").dt.date == days[-1].date()
+        m.loc[busy, "volume"] *= 3        # the last day is three times as busy in both feeds
+        bars.write_minute(m, feed)
+        if feed is Feed.SIP:
+            bars.write_daily(d)
+    universe = tmp_path / "universe.yaml"
+    universe.write_text("min_price: 10\nmin_dollar_volume_20d: 1000\nmin_atr_pct: 0.01\n")
+    cfg = tmp_path / "e1.yaml"
+    cfg.write_text(
+        'times: ["09:35", "09:45", "10:00", "10:30"]\ntrailing_days: 20\nmin_history_days: 10\n'
+        'rvol_flag: 2.5\nerror_time: "10:00"\nflag_time: "09:45"\n'
+        "gate: {median_rvol_error: 0.15, flag_agreement: 0.9}\n"
+        f"universe_config: {universe}\n")
+    mgr = ExperimentManager(bars, store, ExperimentStore(tmp_path),
+                            FixedClock(datetime(2026, 10, 5, 12, 0, tzinfo=UTC)))
+    res = mgr.run_e1(cfg, ["AAA"], datetime(2026, 8, 1, tzinfo=UTC),
+                     datetime(2026, 10, 5, tzinfo=UTC))
+    assert res["passed"], res["verdict"]
+    assert res["verdict"]["median_rvol_error_1000"]["value"] < 1e-9
+    assert res["verdict"]["flag_agreement_0945"]["value"] == 1.0   # both feeds flag the busy day
+    report = (tmp_path / "experiments" / res["run_id"] / "report.md").read_text()
+    assert "IEX versus SIP" in report and "09:45" in report

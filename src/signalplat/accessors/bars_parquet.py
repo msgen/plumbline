@@ -140,6 +140,58 @@ class ParquetBars:
                 out.append(d)
         return out
 
+    def opening_volume(
+        self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed,
+        minutes: Sequence[int],
+    ) -> pd.DataFrame:
+        """Volume and price*volume from 09:30 up to each cut-off minute, per symbol-day.
+
+        `minutes` are minutes since midnight New York (575 = 09:35). Columns are v_HHMM and
+        pv_HHMM (sum of bar vwap * volume), so VWAP is pv / v. Computed month by month in
+        DuckDB, like `minute_summary`.
+        """
+        directory = self._root / "bars_raw_1m" / f"feed={feed.value}"
+        months = self._month_dirs(directory, start, end) if symbols else []
+        labels = [f"{int(m) // 60:02d}{int(m) % 60:02d}" for m in minutes]
+        columns = ["symbol", "day", *[f"{k}_{lab}" for lab in labels for k in ("v", "pv")]]
+        if not months:
+            return pd.DataFrame(columns=columns)
+        select = ",\n".join(
+            f"coalesce(sum(CASE WHEN mod < {int(m)} THEN volume END), 0) AS v_{lab},"
+            f" coalesce(sum(CASE WHEN mod < {int(m)} THEN vwap * volume END), 0) AS pv_{lab}"
+            for m, lab in zip(minutes, labels, strict=True))
+        marks = ",".join("?" for _ in symbols)
+        sql = f"""
+            WITH raw AS (
+                SELECT DISTINCT symbol, timestamp, volume, vwap
+                FROM read_parquet(?, union_by_name=true)
+                WHERE symbol IN ({marks}) AND timestamp >= ? AND timestamp < ?
+            ),
+            f AS (
+                SELECT symbol, volume, vwap, CAST(lt AS DATE) AS day,
+                       hour(lt) * 60 + minute(lt) AS mod
+                FROM (SELECT *, timezone('America/New_York', timestamp) AS lt FROM raw)
+            )
+            SELECT symbol, day, {select}
+            FROM f WHERE mod >= 570 AND mod < {int(max(minutes))}
+            GROUP BY symbol, day
+        """  # noqa: S608
+        parts = []
+        con = duckdb.connect()
+        try:
+            con.execute("SET preserve_insertion_order = false")
+            for month in months:
+                glob = str(month / "part-*.parquet")
+                parts.append(con.execute(sql, [glob, *symbols, start, end]).df())
+        finally:
+            con.close()
+        parts = [p for p in parts if not p.empty]
+        if not parts:
+            return pd.DataFrame(columns=columns)
+        out = pd.concat(parts, ignore_index=True)
+        out["day"] = pd.to_datetime(out["day"]).dt.date
+        return out.sort_values(["symbol", "day"]).reset_index(drop=True)[columns]
+
     def outside_hours_examples(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed, limit: int = 10
     ) -> list[tuple[str, str]]:

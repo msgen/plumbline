@@ -9,7 +9,7 @@ from signalplat.accessors.bars_parquet import ParquetBars
 from signalplat.accessors.dataset_store import DatasetStore
 from signalplat.accessors.experiment_store import ExperimentStore
 from signalplat.contracts.types import Feed
-from signalplat.engines import quality
+from signalplat.engines import feeds, quality
 from signalplat.engines.adjust import adjust_for_splits
 from signalplat.engines.universe import membership
 from signalplat.utilities.clock import NY, Clock, SystemClock, regular_close_minute
@@ -57,6 +57,52 @@ class ExperimentManager:
             "longest_gaps_regular": quality.minute_gaps(mod[reg].tolist()),
         }
 
+    def _universe_days(
+        self, symbols: list[str], start: datetime, end: datetime, ucfg: dict[str, Any]
+    ):
+        """Raw daily bars, their split-adjusted copy, and point-in-time universe membership."""
+        daily = self._bars.daily_bars(symbols, start, end)
+        daily_adj = adjust_for_splits(
+            daily.assign(raw_close=daily["close"]), self._store.read_splits(), end)
+        return daily, daily_adj, membership(daily_adj, ucfg)
+
+    def _save(
+        self, experiment: str, cfg: dict[str, Any], symbols: list[str], start: datetime,
+        end: datetime, metrics: dict[str, Any], verdict: dict[str, Any], render, extra=None,
+    ) -> dict[str, Any]:
+        failed = [k for k, v in verdict.items() if v["status"] == "fail"]
+        run_id = f"{experiment}-{self._clock.now():%Y%m%dT%H%M%SZ}"
+        record = {
+            "run_id": run_id, "experiment": experiment, "config": cfg,
+            "config_hash": hash_config(cfg), "code_commit": self._runs.code_commit(),
+            "dataset_hashes": self._runs.dataset_hash(
+                "bars_raw_1d", "bars_raw_1m", "reference", "news", "corporate_actions", "edgar"),
+            "window": [start, end], "symbols": symbols, **(extra or {}),
+            "metrics": metrics, "verdict": verdict, "passed": not failed,
+        }
+        directory = self._runs.write_run(run_id, record, render(record))
+        return {**record, "directory": str(directory)}
+
+    def run_e1(
+        self, config_path: str | Path, symbols: list[str], start: datetime, end: datetime
+    ) -> dict[str, Any]:
+        """E1: can scaled IEX volume replace SIP volume for RVOL and VWAP near the open?"""
+        cfg = load_config(config_path)
+        ucfg = load_config(cfg["universe_config"])
+        minutes = [int(t[:2]) * 60 + int(t[3:]) for t in cfg["times"]]
+        _, _, members = self._universe_days(symbols, start, end, ucfg)
+        log.info("summarising opening volume (SIP)")
+        sip = self._bars.opening_volume(symbols, start, end, Feed.SIP, minutes)
+        log.info("summarising opening volume (IEX)")
+        iex = self._bars.opening_volume(symbols, start, end, Feed.IEX, minutes)
+        study = feeds.rvol_study(
+            sip, iex, members, minutes, cfg["trailing_days"], cfg["min_history_days"],
+            cfg["rvol_flag"])
+        error_label = feeds.label(int(cfg["error_time"][:2]) * 60 + int(cfg["error_time"][3:]))
+        flag_label = feeds.label(int(cfg["flag_time"][:2]) * 60 + int(cfg["flag_time"][3:]))
+        verdict = feeds.evaluate_e1(study, cfg["gate"], error_label, flag_label)
+        return self._save("E1", cfg, symbols, start, end, study, verdict, render_e1)
+
     def run_e0(
         self, config_path: str | Path, symbols: list[str], start: datetime, end: datetime
     ) -> dict[str, Any]:
@@ -66,7 +112,6 @@ class ExperimentManager:
         sip = self._bars.minute_summary(symbols, start, end, Feed.SIP)
         log.info("summarising minute bars (IEX)")
         iex = self._bars.minute_summary(symbols, start, end, Feed.IEX)
-        daily = self._bars.daily_bars(symbols, start, end)
 
         assets = self._store.read_assets()
         sample = (
@@ -77,10 +122,8 @@ class ExperimentManager:
         delisted_daily = self._bars.daily_bars(sample, min(start, delisted_start), end)
 
         # Gates apply to the point-in-time universe, so judge each day on earlier bars only.
-        daily_adj = adjust_for_splits(
-            daily.assign(raw_close=daily["close"]), self._store.read_splits(), end)
         ucfg = load_config(cfg["universe_config"])
-        members = membership(daily_adj, ucfg)
+        daily, daily_adj, members = self._universe_days(symbols, start, end, ucfg)
         # Minute bars skip odd-lot trades, so they are complete only for cheaper stocks. The
         # completeness gate covers universe days below this price; the rest is reported.
         cap = ucfg.get("complete_bars_max_price")
@@ -114,18 +157,8 @@ class ExperimentManager:
                 self._store.read_news(), symbols, (end - start).days),
         }
         verdict = quality.evaluate_e0(metrics, gate)
-        failed = [k for k, v in verdict.items() if v["status"] == "fail"]
-        run_id = f"E0-{self._clock.now():%Y%m%dT%H%M%SZ}"
-        record = {
-            "run_id": run_id, "experiment": "E0", "config": cfg,
-            "config_hash": hash_config(cfg), "code_commit": self._runs.code_commit(),
-            "dataset_hashes": self._runs.dataset_hash(
-                "bars_raw_1d", "bars_raw_1m", "reference", "news", "corporate_actions", "edgar"),
-            "window": [start, end], "symbols": symbols, "delisted_sample": sample,
-            "metrics": metrics, "verdict": verdict, "passed": not failed,
-        }
-        directory = self._runs.write_run(run_id, record, render_e0(record))
-        return {**record, "directory": str(directory)}
+        return self._save("E0", cfg, symbols, start, end, metrics, verdict, render_e0,
+                          {"delisted_sample": sample})
 
 
 def render_e0(r: dict[str, Any]) -> str:
@@ -181,4 +214,35 @@ def render_e0(r: dict[str, Any]) -> str:
               "", f"Price jumps over 40% still needing review ({len(m['price_jumps'])}; "
               f"{m['price_jumps_reviewed']} already marked reviewed in the config):",
               *[f"- {j}" for j in m["price_jumps"][:50]]]
+    return "\n".join(lines) + "\n"
+
+
+def render_e1(r: dict[str, Any]) -> str:
+    cfg = r["config"]
+    lines = [f"# {r['run_id']}: IEX versus SIP near the open", "",
+             f"Result: **{'PASS' if r['passed'] else 'FAIL'}** "
+             "(a fail means: pay for the full feed, start signals later, or use price-only "
+             "features at the open)", "",
+             "| Check | Value | Gate | Status |", "|---|---|---|---|"]
+    for name, v in r["verdict"].items():
+        val = "n/a" if v["value"] is None else f"{v['value']:.4f}"
+        lines.append(f"| {name} | {val} | {v['op']} {v['threshold']} | {v['status']} |")
+    lines += ["", "Universe days only. RVOL = volume since 09:30 over the mean of the previous "
+              f"{cfg['trailing_days']} days at the same time. IEX is scaled by its trailing "
+              "SIP/IEX ratio. Flag agreement counts the days either feed flags "
+              f"(RVOL >= {cfg['rvol_flag']}), not the many days neither does.", ""]
+    for lab, v in r["metrics"].items():
+        if not v.get("n"):
+            lines += [f"## {lab[:2]}:{lab[2:]}: no comparable days", ""]
+            continue
+        f = lambda x: "n/a" if x is None else f"{x:.3f}"  # noqa: E731
+        lines += [
+            f"## {lab[:2]}:{lab[2:]} ({v['n']} symbol-days)",
+            f"- RVOL error: median {f(v['median_rvol_error'])}, p90 {f(v['p90_rvol_error'])}",
+            f"- flag agreement, all days {f(v['flag_agreement_all'])}; on flagged days "
+            f"{f(v['flag_agreement_flagged'])} ({v['flagged_cases']} cases); "
+            f"precision {f(v['flag_precision'])}, recall {f(v['flag_recall'])}",
+            f"- VWAP difference: median {v['median_vwap_bps']:.1f} bps, "
+            f"p90 {v['p90_vwap_bps']:.1f} bps",
+            f"- median RVOL error by price: {v['median_rvol_error_by_price']}", ""]
     return "\n".join(lines) + "\n"

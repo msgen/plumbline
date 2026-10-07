@@ -1,0 +1,12 @@
+id: E1
+question: Can free IEX live data replace paid real-time data near the open?
+times: ["09:35", "09:45", "10:00", "10:30"]
+trailing_days: 20
+min_history_days: 10
+rvol_flag: 2.5
+error_time: "10:00"     # the plan: median RVOL error under 15% by 10:00
+flag_time: "09:45"      # the plan: RVOL >= 2.5 flag agrees with SIP at 09:45
+gate:
+  median_rvol_error: 0.15
+  flag_agreement: 0.90
+universe_config: config/universe.yaml

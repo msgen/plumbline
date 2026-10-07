@@ -79,6 +79,7 @@ modules = [
   "signalplat.engines.analytics",
   "signalplat.engines.quality",
   "signalplat.engines.adjust",
+  "signalplat.engines.feeds",
 ]
 
 [[tool.importlinter.contracts]]

@@ -49,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
     pil.add_argument("--n", type=int, default=200)
     pil.add_argument("--config", default="config/universe.yaml")
     pil.add_argument("--out", default="config/pilot.txt")
+    e1 = sub.add_parser("e1", help="E1: compare scaled IEX volume with SIP near the open")
+    e1.add_argument("--symbols", default="", help="comma-separated symbols")
+    e1.add_argument("--symbols-file", help="file with one symbol per line")
+    e1.add_argument("--start", type=_day, required=True)
+    e1.add_argument("--end", type=_day, required=True)
+    e1.add_argument("--config", default="experiments/E01_iex_vs_sip.yaml")
     ins = sub.add_parser("inspect", help="show stored bars facts for one symbol and day")
     ins.add_argument("symbol")
     ins.add_argument("day", type=_day, help="YYYY-MM-DD (New York trading day)")
@@ -105,6 +111,12 @@ def _run(args: argparse.Namespace) -> int:
         Path(args.out).write_text("\n".join(table["symbol"]) + "\n", encoding="utf-8")
         print(f"{checked} eligible symbols checked, {len(table)} written to {args.out}")
         print(table.head(10).to_string(index=False))
+    elif args.command == "e1":
+        result = ExperimentManager.from_env().run_e1(
+            args.config, _symbols(args), args.start, args.end)
+        print((Path(result["directory"]) / "report.md").read_text(encoding="utf-8"))
+        print(f"saved to {result['directory']}")
+        return 0 if result["passed"] else 1
     elif args.command == "inspect":
         info = ExperimentManager.from_env().inspect_day(
             args.symbol.upper(), args.day, Feed(args.feed))
