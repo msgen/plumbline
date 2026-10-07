@@ -114,7 +114,8 @@ def test_max_price_caps_both_the_selection_and_the_membership():
 
     cfg = {**CFG, "max_price": 60.0}
     d = pd.concat([bars("CHEAP", [50.0] * 40, volume=500_000),
-                   bars("DEAR", [500.0] * 40, highs=[520.0] * 40, lows=[480.0] * 40, volume=50_000)])
+                   bars("DEAR", [500.0] * 40, highs=[520.0] * 40, lows=[480.0] * 40,
+                        volume=50_000)])
     d["raw_close"] = d["close"]
     as_of = datetime(2027, 1, 1, tzinfo=UTC)
     assert list(select_universe(d, as_of, cfg)["symbol"]) == ["CHEAP"]
