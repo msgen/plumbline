@@ -104,3 +104,34 @@ def test_filings_and_news_coverage():
     n = q.news_coverage(news, ["AAA", "BBB", "CCC"], days=2)
     assert n == {"articles": 3, "per_day": 1.5, "symbols_with_news": 2, "symbols": 3}
     assert q.news_coverage(None, ["AAA"], 5)["articles"] == 0
+
+
+def test_the_2000_minute_is_a_boundary_not_an_outside_bar():
+    ts = pd.to_datetime(["2026-10-01 19:59", "2026-10-01 20:00", "2026-10-01 20:01",
+                         "2026-10-01 03:59"]).tz_localize(NY).tz_convert("UTC")
+    m = pd.DataFrame({"symbol": "AAA", "timestamp": ts, "volume": 1.0, "trade_count": 1})
+    s = q.summarize_minutes(m)
+    assert q.boundary_bars(s) == 1
+    assert q.outside_extended_hours(s) == 2  # 20:01 and 03:59
+
+
+def test_missing_minutes_reported_by_trade_density():
+    # a busy stock (many trades per minute) with a full day, a sparse one missing most minutes
+    busy = minutes("BUSY", "2026-10-01").assign(trade_count=20)
+    sparse = minutes("SPARSE", "2026-10-01").iloc[:60].assign(trade_count=1)
+    d = pd.concat([daily("BUSY", "2026-10-01"), daily("SPARSE", "2026-10-01")])
+    r = q.missing_regular_minutes(q.summarize_minutes(pd.concat([busy, sparse])), d)
+    dens = r["by_trades_per_minute"]
+    assert dens[">10"]["missing_fraction"] == 0.0
+    assert dens["<0.5"]["missing_fraction"] == 330 / 390
+
+
+def test_price_jumps_only_on_universe_days_when_members_given():
+    d = pd.concat([daily("AAA", "2026-10-01", 10), daily("AAA", "2026-10-02", 20)],
+                  ignore_index=True)
+    day = pd.Timestamp("2026-10-02").date()
+    yes = pd.DataFrame({"symbol": ["AAA"], "day": [day], "member": [True]})
+    no = pd.DataFrame({"symbol": ["AAA"], "day": [day], "member": [False]})
+    assert len(q.price_jumps(d, members=yes)) == 1
+    assert q.price_jumps(d, members=no) == []
+    assert len(q.price_jumps(d)) == 1

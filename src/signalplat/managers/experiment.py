@@ -57,7 +57,10 @@ class ExperimentManager:
             daily.assign(raw_close=daily["close"]), self._store.read_splits(), end)
         members = membership(daily_adj, load_config(cfg["universe_config"]))
         all_jumps = quality.price_jumps(daily_adj)
-        jumps = quality.price_jumps(daily_adj, members=members)
+        listed = quality.price_jumps(daily_adj, members=members)
+        reviewed = {(r["symbol"], str(r["day"])) for r in cfg.get("reviewed_jumps") or []}
+        jumps = [j for j in listed if (j[0], j[1]) not in reviewed]
+        n_reviewed = len(listed) - len(jumps)
 
         metrics = {
             "delisted": quality.delisted_coverage(sample, delisted_daily),
@@ -66,16 +69,17 @@ class ExperimentManager:
             "volume": quality.volume_consistency(sip, daily, gate["daily_vs_minute_volume_tol"]),
             "duplicates": quality.duplicate_minute_rows(sip) + quality.duplicate_count(daily),
             "outside_hours": quality.outside_extended_hours(sip),
+            "boundary_bars": quality.boundary_bars(sip),
+            "price_jumps_reviewed": n_reviewed,
             "outside_hours_examples": self._bars.outside_hours_examples(
                 symbols, start, end, Feed.SIP),
-            "price_jumps_outside_universe": len(all_jumps) - len(jumps),
-            # raw bars show splits as jumps, so look for jumps after known splits are applied
+            "price_jumps_outside_universe": len(all_jumps) - len(listed),
+            # judged after known splits are applied, on universe days, minus reviewed ones
+            "price_jumps": jumps,
             "filings_coverage": quality.filings_coverage(
                 symbols, sample, self._store.read_filings()),
             "news_coverage": quality.news_coverage(
                 self._store.read_news(), symbols, (end - start).days),
-            "price_jumps": quality.price_jumps(
-                adjust_for_splits(daily, self._store.read_splits(), end)),
         }
         verdict = quality.evaluate_e0(metrics, gate)
         failed = [k for k, v in verdict.items() if v["status"] == "fail"]
@@ -118,10 +122,16 @@ def render_e0(r: dict[str, Any]) -> str:
               f"({m['missing_minutes']['symbol_days']} symbol-days). "
               f"All days, including days a stock was not in the universe: "
               f"{m['missing_minutes']['fraction_all']}",
-              f"Bars outside 04:00-20:00 New York (examples): {m['outside_hours_examples']}",
+              f"Bars stamped exactly 20:00 (session boundary, not gated): {m['boundary_bars']}",
+              "Bars before 04:00 or after 20:00 New York (examples): "
+              f"{m['outside_hours_examples']}",
+              "Missing-minute fraction by regular-session trades per minute "
+              "(universe days):",
+              *[f"- {k}: {v}" for k, v in m["missing_minutes"]["by_trades_per_minute"].items()],
               f"Price jumps outside the universe (not listed): {m['price_jumps_outside_universe']}",
               "", "Worst symbol-days for missing minutes (symbol, day, minutes):",
               *[f"- {w}" for w in m["missing_minutes"]["worst"]],
-              "", f"Price jumps over 40% needing review ({len(m['price_jumps'])}):",
+              "", f"Price jumps over 40% still needing review ({len(m['price_jumps'])}; "
+              f"{m['price_jumps_reviewed']} already marked reviewed in the config):",
               *[f"- {j}" for j in m["price_jumps"][:50]]]
     return "\n".join(lines) + "\n"

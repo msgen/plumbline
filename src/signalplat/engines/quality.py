@@ -57,14 +57,17 @@ def summarize_minutes(minute: pd.DataFrame) -> pd.DataFrame:
     m = m.assign(
         reg_mod=m["mod"].where(reg),
         vol_regular=m["volume"].where(reg, 0.0),
-        outside=((m["mod"] < EXTENDED_OPEN) | (m["mod"] >= EXTENDED_CLOSE)).astype(int),
+        trades_regular=(m["trade_count"].where(reg, 0.0) if "trade_count" in m else 0.0),
+        outside=((m["mod"] < EXTENDED_OPEN) | (m["mod"] > EXTENDED_CLOSE)).astype(int),
+        boundary=(m["mod"] == EXTENDED_CLOSE).astype(int),
     )
     g = m.groupby(["symbol", "day"])
     out = pd.DataFrame({
         "rows": g.size(), "timestamps": g["timestamp"].nunique(),
         "reg_minutes": g["reg_mod"].nunique(), "reg_first": g["reg_mod"].min(),
         "reg_last": g["reg_mod"].max(), "vol_all": g["volume"].sum(),
-        "vol_regular": g["vol_regular"].sum(), "outside": g["outside"].sum(),
+        "vol_regular": g["vol_regular"].sum(), "trades_regular": g["trades_regular"].sum(),
+        "outside": g["outside"].sum(), "boundary": g["boundary"].sum(),
     }).reset_index()
     return out[MINUTE_SUMMARY_COLUMNS]
 
@@ -78,7 +81,13 @@ def duplicate_minute_rows(summary: pd.DataFrame) -> int:
 
 
 def outside_extended_hours(summary: pd.DataFrame) -> int:
+    """Bars before 04:00 or after 20:00 New York. The 20:00 minute itself is the session's
+    closing boundary, counted separately by `boundary_bars`."""
     return int(summary["outside"].sum()) if len(summary) else 0
+
+
+def boundary_bars(summary: pd.DataFrame) -> int:
+    return int(summary["boundary"].sum()) if len(summary) else 0
 
 
 def missing_regular_minutes(
@@ -106,17 +115,30 @@ def missing_regular_minutes(
     d["expected"] = d["expected"].fillna(REGULAR_MINUTES)
     d["observed"] = d["observed"].fillna(0).clip(upper=d["expected"])
     d["missing"] = d["expected"] - d["observed"]
+    if len(summary):
+        d = d.join(summary.set_index(["symbol", "day"])["trades_regular"], on=["symbol", "day"])
+    else:
+        d["trades_regular"] = 0.0
     all_expected, all_missing = float(d["expected"].sum()), float(d["missing"].sum())
     if members is not None:
         keep = members.loc[members["member"], ["symbol", "day"]]
         d = d.merge(keep, on=["symbol", "day"], how="inner")
     expected, missing = float(d["expected"].sum()), float(d["missing"].sum())
+    density = d["trades_regular"].fillna(0) / d["expected"].clip(lower=1)
+    bucket = pd.cut(density, [-1, 0.5, 1, 3, 10, float("inf")],
+                    labels=["<0.5", "0.5-1", "1-3", "3-10", ">10"])
+    by_density = {
+        str(label): {"symbol_days": int(len(g)),
+                     "missing_fraction": float(g["missing"].sum() / g["expected"].sum())}
+        for label, g in d.groupby(bucket, observed=True) if g["expected"].sum() > 0
+    }
     worst = d[d["missing"] > 0].sort_values("missing", ascending=False).head(10)
     return {
         "symbol_days": len(d), "expected": int(expected), "missing": int(missing),
         "fraction": missing / expected if expected else None,
         "fraction_all": all_missing / all_expected if all_expected else None,
         "scope": "universe days" if members is not None else "all days",
+        "by_trades_per_minute": by_density,
         "worst": [(r.symbol, str(r.day), int(r.missing)) for r in worst.itertuples()],
     }
 
@@ -206,7 +228,7 @@ def evaluate_e0(metrics: dict[str, Any], gate: dict[str, float]) -> dict[str, di
         status = "n/a" if value is None else ("pass" if ok(value) else "fail")
         return {"value": value, "threshold": threshold, "op": op, "status": status}
 
-    jumps = metrics["price_jumps"]
+    jumps = metrics["price_jumps"]  # jumps nobody has reviewed yet
     return {
         "delisted_present": line(metrics["delisted"]["fraction"], gate["delisted_present_min"],
                                  lambda v: v >= gate["delisted_present_min"], ">="),

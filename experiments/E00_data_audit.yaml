@@ -10,3 +10,6 @@ seed: 7
 delisted_start: 2016-01-01
 # gates on minutes and price jumps apply to days the stock was in this point-in-time universe
 universe_config: config/universe.yaml
+# Jumps you have looked at and judged real (or otherwise explained). Add entries like
+#   - {symbol: AAA, day: "2025-01-02", note: "earnings, volume 8x"}
+reviewed_jumps: []

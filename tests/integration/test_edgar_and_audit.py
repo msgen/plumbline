@@ -172,3 +172,35 @@ def test_duckdb_minute_summary_matches_the_pandas_reference(tmp_path):
                                                 datetime(2026, 11, 1, tzinfo=UTC), Feed.SIP).empty
     assert ParquetBars(tmp_path).minute_summary(["AAA"], datetime(2026, 9, 1, tzinfo=UTC),
                                                 datetime(2026, 11, 1, tzinfo=UTC), Feed.IEX).empty
+
+
+def test_reviewed_jumps_clear_the_review_status(tmp_path):
+    bars, store = ParquetBars(tmp_path), DatasetStore(tmp_path)
+    days = pd.bdate_range("2026-08-03", periods=30)
+    m, d = _history("AAA", days, 390)
+    d.loc[d.index[-1], ["open", "high", "low", "close"]] = [100.0, 104.0, 96.0, 100.0]  # +100%
+    bars.write_minute(m, Feed.SIP)
+    bars.write_daily(d)
+    store.write_assets(pd.DataFrame({
+        "symbol": ["DAA"], "name": "n", "exchange": "NYSE", "status": "inactive",
+        "tradable": False, "asset_class": "us_equity"}))
+    universe = tmp_path / "universe.yaml"
+    universe.write_text("min_price: 10\nmin_dollar_volume_20d: 1000\nmin_atr_pct: 0.01\n")
+    day = str(days[-1].date())
+
+    def run(reviewed):
+        cfg = tmp_path / "e0.yaml"
+        cfg.write_text(
+            "gate: {delisted_present_min: 0.0, missing_regular_minutes_max: 0.005,"
+            " daily_vs_minute_volume_tol: 0.5}\ndelisted_sample: 1\nseed: 1\n"
+            f"delisted_start: 2016-01-01\nuniverse_config: {universe}\n"
+            f"reviewed_jumps: {reviewed}\n")
+        mgr = ExperimentManager(bars, store, ExperimentStore(tmp_path),
+                                FixedClock(datetime(2026, 10, 5, 12, 0, tzinfo=UTC)))
+        return mgr.run_e0(cfg, ["AAA"], datetime(2026, 8, 1, tzinfo=UTC),
+                          datetime(2026, 10, 5, tzinfo=UTC))
+
+    assert run("[]")["verdict"]["price_jumps"]["status"] == "review"
+    res = run(f'[{{symbol: AAA, day: "{day}", note: "checked: earnings"}}]')
+    assert res["verdict"]["price_jumps"]["status"] == "pass"
+    assert res["metrics"]["price_jumps_reviewed"] == 1

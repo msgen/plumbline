@@ -12,7 +12,7 @@ import pandas as pd
 # Per symbol-day facts about stored minute bars (the table behind the E0 audit).
 MINUTE_SUMMARY_COLUMNS = [
     "symbol", "day", "rows", "timestamps", "reg_minutes", "reg_first", "reg_last",
-    "vol_all", "vol_regular", "outside",
+    "vol_all", "vol_regular", "trades_regular", "outside", "boundary",
 ]
 
 

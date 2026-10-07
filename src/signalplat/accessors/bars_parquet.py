@@ -19,16 +19,17 @@ COLUMNS = [
 
 _SUMMARY_SQL = """
     WITH raw AS (
-        SELECT DISTINCT symbol, timestamp, volume
+        SELECT DISTINCT symbol, timestamp, volume, trade_count
         FROM read_parquet(?, union_by_name=true)
         WHERE symbol IN ({marks}) AND timestamp >= ? AND timestamp < ?
     ),
     local AS (
-        SELECT symbol, timestamp, volume, timezone('America/New_York', timestamp) AS lt
+        SELECT symbol, timestamp, volume, trade_count,
+               timezone('America/New_York', timestamp) AS lt
         FROM raw
     ),
     f AS (
-        SELECT symbol, timestamp, volume, CAST(lt AS DATE) AS day,
+        SELECT symbol, timestamp, volume, trade_count, CAST(lt AS DATE) AS day,
                hour(lt) * 60 + minute(lt) AS mod
         FROM local
     ),
@@ -43,7 +44,9 @@ _SUMMARY_SQL = """
            max(CASE WHEN reg THEN mod END) AS reg_last,
            sum(volume) AS vol_all,
            coalesce(sum(CASE WHEN reg THEN volume END), 0) AS vol_regular,
-           count(*) FILTER (WHERE mod < 240 OR mod >= 1200) AS outside
+           coalesce(sum(CASE WHEN reg THEN trade_count END), 0) AS trades_regular,
+           count(*) FILTER (WHERE mod < 240 OR mod > 1200) AS outside,
+           count(*) FILTER (WHERE mod = 1200) AS boundary
     FROM g GROUP BY symbol, day
 """
 
@@ -109,7 +112,8 @@ class ParquetBars:
             rows=("rows", "sum"), timestamps=("timestamps", "sum"),
             reg_minutes=("reg_minutes", "sum"), reg_first=("reg_first", "min"),
             reg_last=("reg_last", "max"), vol_all=("vol_all", "sum"),
-            vol_regular=("vol_regular", "sum"), outside=("outside", "sum"))
+            vol_regular=("vol_regular", "sum"), trades_regular=("trades_regular", "sum"),
+            outside=("outside", "sum"), boundary=("boundary", "sum"))
         out[["reg_first", "reg_last"]] = out[["reg_first", "reg_last"]].astype(float)
         out["day"] = pd.to_datetime(out["day"]).dt.date  # plain dates, as the engines use
         return out[MINUTE_SUMMARY_COLUMNS]
@@ -130,7 +134,7 @@ class ParquetBars:
     def outside_hours_examples(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed, limit: int = 10
     ) -> list[tuple[str, str]]:
-        """A few stored bars stamped outside 04:00-20:00 New York, as (symbol, local time)."""
+        """A few stored bars before 04:00 or after 20:00 New York, as (symbol, local time)."""
         directory = self._root / "bars_raw_1m" / f"feed={feed.value}"
         if not symbols or not directory.exists() or not any(directory.rglob("part-*.parquet")):
             return []
@@ -140,7 +144,8 @@ class ParquetBars:
             FROM read_parquet(?, union_by_name=true)
             WHERE symbol IN ({marks}) AND timestamp >= ? AND timestamp < ?
               AND (hour(timezone('America/New_York', timestamp)) < 4
-                   OR hour(timezone('America/New_York', timestamp)) >= 20)
+                   OR hour(timezone('America/New_York', timestamp)) * 60
+                      + minute(timezone('America/New_York', timestamp)) > 1200)
             ORDER BY 2 LIMIT {int(limit)}
         """  # noqa: S608
         glob = str(directory / "**" / "part-*.parquet")
