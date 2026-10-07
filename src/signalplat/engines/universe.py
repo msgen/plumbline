@@ -61,3 +61,37 @@ def select_universe(
              & (t["atr_pct"] > cfg["min_atr_pct"])]
     keep = keep.sort_values("dollar_volume_20d", ascending=False).reset_index(drop=True)
     return keep.head(n) if n else keep
+
+
+def membership(daily: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
+    """For every bar, whether its symbol was in the universe that day, from earlier bars only.
+
+    Day t is judged on data through the previous bar's close. The price rule uses `raw_close`
+    (the price level actually visible then); dollar volume and ATR% are unaffected by splits,
+    so they use the adjusted columns. Returns symbol, day (New York date) and member.
+    """
+    d = daily.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
+    g = d.groupby("symbol", sort=False)
+    prev_close = g["close"].shift()
+    tr = pd.concat([d["high"] - d["low"], (d["high"] - prev_close).abs(),
+                    (d["low"] - prev_close).abs()], axis=1).max(axis=1)
+    d = d.assign(tr=tr, dollar_volume=d["close"] * d["volume"])
+    g = d.groupby("symbol", sort=False)
+    atr = g["tr"].transform(lambda s: s.rolling(ATR_WINDOW, min_periods=ATR_WINDOW).mean())
+    dv = g["dollar_volume"].transform(
+        lambda s: s.rolling(VOLUME_WINDOW, min_periods=ATR_WINDOW + 1).mean())
+    known = pd.DataFrame({
+        "symbol": d["symbol"], "raw_close": d["raw_close"],
+        "dv": dv, "atr_pct": atr / d["close"],
+        "count": g.cumcount() + 1,
+    })
+    # what was known after the previous bar applies to this bar's day
+    prev = known.groupby("symbol", sort=False)[["raw_close", "dv", "atr_pct", "count"]].shift()
+    member = (
+        (prev["count"] >= ATR_WINDOW + 1)
+        & (prev["raw_close"] > cfg["min_price"])
+        & (prev["dv"] > cfg["min_dollar_volume_20d"])
+        & (prev["atr_pct"] > cfg["min_atr_pct"])
+    ).fillna(False)
+    day = d["timestamp"].dt.tz_convert("America/New_York").dt.date
+    return pd.DataFrame({"symbol": d["symbol"], "day": day, "member": member})

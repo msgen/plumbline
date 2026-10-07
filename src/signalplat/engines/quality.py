@@ -81,8 +81,14 @@ def outside_extended_hours(summary: pd.DataFrame) -> int:
     return int(summary["outside"].sum()) if len(summary) else 0
 
 
-def missing_regular_minutes(summary: pd.DataFrame, daily: pd.DataFrame) -> dict[str, Any]:
+def missing_regular_minutes(
+    summary: pd.DataFrame, daily: pd.DataFrame, members: pd.DataFrame | None = None
+) -> dict[str, Any]:
     """Share of regular-session minutes missing for symbol-days that have a daily bar.
+
+    With `members` (symbol, day, member), `fraction` covers universe days only, which is what
+    the gate is about: a thin stock legitimately has minutes with no trades. `fraction_all`
+    always covers every day.
 
     The expected session each day is the market-wide first to last regular minute seen, so
     half days are not counted as missing. A day with no minute data at all expects 390.
@@ -100,16 +106,24 @@ def missing_regular_minutes(summary: pd.DataFrame, daily: pd.DataFrame) -> dict[
     d["expected"] = d["expected"].fillna(REGULAR_MINUTES)
     d["observed"] = d["observed"].fillna(0).clip(upper=d["expected"])
     d["missing"] = d["expected"] - d["observed"]
+    all_expected, all_missing = float(d["expected"].sum()), float(d["missing"].sum())
+    if members is not None:
+        keep = members.loc[members["member"], ["symbol", "day"]]
+        d = d.merge(keep, on=["symbol", "day"], how="inner")
     expected, missing = float(d["expected"].sum()), float(d["missing"].sum())
     worst = d[d["missing"] > 0].sort_values("missing", ascending=False).head(10)
     return {
         "symbol_days": len(d), "expected": int(expected), "missing": int(missing),
         "fraction": missing / expected if expected else None,
+        "fraction_all": all_missing / all_expected if all_expected else None,
+        "scope": "universe days" if members is not None else "all days",
         "worst": [(r.symbol, str(r.day), int(r.missing)) for r in worst.itertuples()],
     }
 
 
-def price_jumps(daily: pd.DataFrame, threshold: float = 0.40) -> list[tuple[str, str, float]]:
+def price_jumps(
+    daily: pd.DataFrame, threshold: float = 0.40, members: pd.DataFrame | None = None
+) -> list[tuple[str, str, float]]:
     """Close-to-close moves beyond threshold in split-adjusted data: each needs a human look."""
     if daily.empty:
         return []
@@ -117,6 +131,9 @@ def price_jumps(daily: pd.DataFrame, threshold: float = 0.40) -> list[tuple[str,
     d["ret"] = d.groupby("symbol")["close"].pct_change()
     d["day"] = d["timestamp"].dt.tz_convert(NY).dt.date
     hit = d[d["ret"].abs() > threshold]
+    if members is not None:  # only moves on days the stock was in the universe
+        keep = members.loc[members["member"], ["symbol", "day"]]
+        hit = hit.merge(keep, on=["symbol", "day"], how="inner")
     return [(r.symbol, str(r.day), float(r.ret)) for r in hit.itertuples()]
 
 

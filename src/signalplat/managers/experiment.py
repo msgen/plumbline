@@ -11,6 +11,7 @@ from signalplat.accessors.experiment_store import ExperimentStore
 from signalplat.contracts.types import Feed
 from signalplat.engines import quality
 from signalplat.engines.adjust import adjust_for_splits
+from signalplat.engines.universe import membership
 from signalplat.utilities.clock import Clock, SystemClock
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env
@@ -51,13 +52,23 @@ class ExperimentManager:
         delisted_start = datetime.combine(cfg["delisted_start"], time(), tzinfo=UTC)
         delisted_daily = self._bars.daily_bars(sample, min(start, delisted_start), end)
 
+        # Gates apply to the point-in-time universe, so judge each day on earlier bars only.
+        daily_adj = adjust_for_splits(
+            daily.assign(raw_close=daily["close"]), self._store.read_splits(), end)
+        members = membership(daily_adj, load_config(cfg["universe_config"]))
+        all_jumps = quality.price_jumps(daily_adj)
+        jumps = quality.price_jumps(daily_adj, members=members)
+
         metrics = {
             "delisted": quality.delisted_coverage(sample, delisted_daily),
-            "missing_minutes": quality.missing_regular_minutes(sip, daily),
-            "missing_minutes_iex": quality.missing_regular_minutes(iex, daily),
+            "missing_minutes": quality.missing_regular_minutes(sip, daily, members),
+            "missing_minutes_iex": quality.missing_regular_minutes(iex, daily, members),
             "volume": quality.volume_consistency(sip, daily, gate["daily_vs_minute_volume_tol"]),
             "duplicates": quality.duplicate_minute_rows(sip) + quality.duplicate_count(daily),
             "outside_hours": quality.outside_extended_hours(sip),
+            "outside_hours_examples": self._bars.outside_hours_examples(
+                symbols, start, end, Feed.SIP),
+            "price_jumps_outside_universe": len(all_jumps) - len(jumps),
             # raw bars show splits as jumps, so look for jumps after known splits are applied
             "filings_coverage": quality.filings_coverage(
                 symbols, sample, self._store.read_filings()),
@@ -103,6 +114,12 @@ def render_e0(r: dict[str, Any]) -> str:
               "IEX missing-minute fraction (informational): "
               f"{m['missing_minutes_iex']['fraction']}",
               f"Volume convention matched: {m['volume'].get('convention')}",
+              "", f"Missing-minute scope for the gate: {m['missing_minutes']['scope']} "
+              f"({m['missing_minutes']['symbol_days']} symbol-days). "
+              f"All days, including days a stock was not in the universe: "
+              f"{m['missing_minutes']['fraction_all']}",
+              f"Bars outside 04:00-20:00 New York (examples): {m['outside_hours_examples']}",
+              f"Price jumps outside the universe (not listed): {m['price_jumps_outside_universe']}",
               "", "Worst symbol-days for missing minutes (symbol, day, minutes):",
               *[f"- {w}" for w in m["missing_minutes"]["worst"]],
               "", f"Price jumps over 40% needing review ({len(m['price_jumps'])}):",

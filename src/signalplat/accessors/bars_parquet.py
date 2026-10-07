@@ -97,6 +97,29 @@ class ParquetBars:
         out["day"] = pd.to_datetime(out["day"]).dt.date  # plain dates, as the engines use
         return out[MINUTE_SUMMARY_COLUMNS]
 
+    def outside_hours_examples(
+        self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed, limit: int = 10
+    ) -> list[tuple[str, str]]:
+        """A few stored bars stamped outside 04:00-20:00 New York, as (symbol, local time)."""
+        directory = self._root / "bars_raw_1m" / f"feed={feed.value}"
+        if not symbols or not directory.exists() or not any(directory.rglob("part-*.parquet")):
+            return []
+        marks = ",".join("?" for _ in symbols)
+        sql = f"""
+            SELECT symbol, strftime(timezone('America/New_York', timestamp), '%Y-%m-%d %H:%M')
+            FROM read_parquet(?, union_by_name=true)
+            WHERE symbol IN ({marks}) AND timestamp >= ? AND timestamp < ?
+              AND (hour(timezone('America/New_York', timestamp)) < 4
+                   OR hour(timezone('America/New_York', timestamp)) >= 20)
+            ORDER BY 2 LIMIT {int(limit)}
+        """  # noqa: S608
+        glob = str(directory / "**" / "part-*.parquet")
+        con = duckdb.connect()
+        try:
+            return [tuple(r) for r in con.execute(sql, [glob, *symbols, start, end]).fetchall()]
+        finally:
+            con.close()
+
     @staticmethod
     def _read(
         directory: Path, symbols: Sequence[str], start: datetime, end: datetime

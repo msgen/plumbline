@@ -73,3 +73,37 @@ def test_eligible_assets_drops_funds_otc_inactive_and_odd_tickers():
     ]
     a = pd.DataFrame(rows, columns=["symbol", "name", "exchange", "status", "tradable"])
     assert eligible_assets(a) == ["AAPL", "JPM"]
+
+
+def test_membership_equals_select_universe_at_the_previous_close():
+    from signalplat.engines.universe import membership
+
+    cfgm = {**CFG, "min_atr_pct": 0.02}
+    d = pd.concat([
+        bars("LIQ", [50.0] * 40, volume=500_000),
+        bars("PENNY", [5.0] * 40, highs=[6.0] * 40, lows=[4.0] * 40, volume=10_000_000),
+        bars("QUIET", [50.0] * 40, highs=[50.1] * 40, lows=[49.9] * 40, volume=500_000),
+    ])
+    d["raw_close"] = d["close"]
+    m = membership(d, cfgm).set_index(["symbol", "day"])["member"]
+    for sym in ("LIQ", "PENNY", "QUIET"):
+        g = d[d["symbol"] == sym].reset_index(drop=True)
+        for i in (3, 14, 15, 25, 39):  # before and after the 15-bar warm-up
+            prior = g.iloc[i - 1]["available_at"]  # information available before bar i
+            chosen = set(select_universe(d, prior.to_pydatetime(), cfgm)["symbol"])
+            day = g.iloc[i]["timestamp"].tz_convert("America/New_York").date()
+            assert bool(m[(sym, day)]) == (sym in chosen), (sym, i)
+    assert m[("LIQ", d[d.symbol == "LIQ"].iloc[39]["timestamp"]
+              .tz_convert("America/New_York").date())]
+
+
+def test_membership_price_rule_uses_the_price_visible_at_the_time():
+    from signalplat.engines.universe import membership
+
+    # $8 raw before a 1-for-10 reverse split: adjusted history says $80, but it was an $8 stock
+    adj = bars("AAA", [80.0] * 40, volume=500_000)
+    adj["raw_close"] = [8.0] * 30 + [80.0] * 10
+    m = membership(adj, CFG).set_index("day")["member"]
+    days = adj["timestamp"].dt.tz_convert("America/New_York").dt.date
+    assert not m[days.iloc[25]]       # still an $8 stock then
+    assert m[days.iloc[38]]           # an $80 stock after the split
