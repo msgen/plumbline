@@ -100,3 +100,27 @@ def membership(daily: pd.DataFrame, cfg: dict[str, Any]) -> pd.DataFrame:
         "symbol": d["symbol"], "day": day, "member": member,
         "price": prev["raw_close"],  # the price level visible before the day began
     })
+
+
+def daily_context(daily: pd.DataFrame) -> pd.DataFrame:
+    """Per symbol-day facts known when the day opens: ATR% from earlier bars, and the gap.
+
+    `daily` holds split-adjusted bars (symbol, timestamp, open, high, low, close). ATR% uses
+    bars through the previous day only; the gap is today's open over the previous close, both
+    on the same adjusted scale. Returns symbol, day, atr_pct, gap_pct, prev_close.
+    """
+    d = daily.sort_values(["symbol", "timestamp"]).reset_index(drop=True)
+    g = d.groupby("symbol", sort=False)
+    prev_close = g["close"].shift()
+    tr = pd.concat([d["high"] - d["low"], (d["high"] - prev_close).abs(),
+                    (d["low"] - prev_close).abs()], axis=1).max(axis=1)
+    atr = tr.groupby(d["symbol"], sort=False).transform(
+        lambda s: s.rolling(ATR_WINDOW, min_periods=ATR_WINDOW).mean())
+    atr_pct_close = atr / d["close"]
+    day = d["timestamp"].dt.tz_convert("America/New_York").dt.date
+    return pd.DataFrame({
+        "symbol": d["symbol"], "day": day,
+        "atr_pct": atr_pct_close.groupby(d["symbol"], sort=False).shift(),
+        "gap_pct": d["open"] / prev_close - 1,
+        "prev_close": prev_close,
+    })

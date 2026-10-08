@@ -123,3 +123,19 @@ def test_max_price_caps_both_the_selection_and_the_membership():
     m = membership(d, cfg)
     last = m.groupby("symbol")["member"].last()
     assert bool(last["CHEAP"]) and not bool(last["DEAR"])
+
+
+def test_daily_context_uses_only_earlier_bars_for_atr_and_computes_the_gap():
+    from signalplat.engines.universe import daily_context
+
+    d = bars("AAA", [100.0] * 20 + [110.0], highs=[102.0] * 20 + [111.0],
+             lows=[98.0] * 20 + [109.0])
+    d["open"] = [100.0] * 20 + [108.0]
+    c = daily_context(d).reset_index(drop=True)
+    assert abs(c.iloc[-1]["gap_pct"] - 0.08) < 1e-12            # 108 over the 100 close
+    assert abs(c.iloc[19]["atr_pct"] - 0.04) < 1e-12            # 14 bars of range 4 on 100
+    assert abs(c.iloc[-1]["atr_pct"] - 0.04) < 1e-12            # the 110 day is not in its own ATR
+    assert c.iloc[:14]["atr_pct"].isna().all()                   # warm-up
+    poisoned = d.copy()
+    poisoned.loc[poisoned.index[-1], ["high", "low", "close"]] = [9e9, 1.0, 5e9]
+    assert daily_context(poisoned).iloc[-1]["atr_pct"] == c.iloc[-1]["atr_pct"]

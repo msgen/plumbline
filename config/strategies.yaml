@@ -1,8 +1,24 @@
-# Starting values only; E3 to E5 decide the real ones.
+# Starting values only; E3 to E5 decide the real ones. Every combination tried is a trial
+# and must be counted for the deflated Sharpe ratio.
+window:                    # signals only inside this New York time window
+  start: "09:35"
+  end: "11:00"
+rvol_min: 2.5
+rvol_applies_to: [A_breakout, C_catalyst_gap]    # run with sip / iex_scaled / none
+stop:
+  mode: atr                # atr | structure (E5 compares them)
+  atr_mult: 1.0
+  min_risk_pct: 0.002
+target_r: [2.0]
+time_limit_minutes: 60
 A_breakout:
-  rvol_min: 2.5
+  or_minutes: 15
+  min_range_bars: 3
+  require_above_vwap: true
 B_vwap_reclaim:
   band_sigma: 1.5
   lookback_bars: 30
+  reclaim_bars: 10
 C_catalyst_gap:
   min_gap_pct: 0.03
+  range_minutes: 5
