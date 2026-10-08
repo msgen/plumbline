@@ -16,6 +16,16 @@ numbers will size before E9.
 
 | 8 | Minute bars incomplete for expensive stocks | E0 on the 200-name pilot showed missing regular-session minutes and a minute-volume shortfall growing steadily with price (0.39% missing under $50, 24.5% above $1,000). The pattern fits minute bars skipping odd-lot trades; not confirmed. A price cap on the universe was tried and rejected: expensive stocks stay in the universe. The completeness gate (0.5%, unchanged) is measured on universe days priced below `complete_bars_max_price` (50, config/universe.yaml); the whole-universe and per-price-tier numbers are reported alongside. E3 and E7 results must be broken down by price tier, and features for expensive names must not rely on minute volume (use daily volume, forward-fill empty minutes). XTB fractional-share support decides whether very expensive names are tradable at $500.
 
+| 9 | E1 failed: free IEX volume is too noisy for RVOL | On 17,112 universe symbol-days, scaled-IEX RVOL has a median error of 36% at 09:35, 23.5% at 10:00 and 20.4% at 10:30 (gate: under 15% by 10:00). The RVOL >= 2.5 flag agrees with SIP on 41% of days either feed flags (gate 90%). Leaving out the opening-auction minute did not help (23.7% at 10:00). IEX VWAP is close to SIP VWAP (about 5 to 8 bps median). Decision pending: see below. |
+
+## Consequence of E1 for all research
+
+Features must be computed from the data that will exist live. Backtests that use true SIP volume
+for a feature (RVOL, volume-weighted anything) while live trading uses IEX estimates would
+produce live signals that differ from the backtest on roughly half the flagged days, and E13
+replay parity would fail. Either live data is upgraded to the full feed, or research features
+use the same IEX-scaled estimate (so the research sees the same noise) or avoid live volume.
+
 ## To build into the engines (not written yet)
 
 **2. Expectancy must include time-outs (labeling, ranking, E12).** Every label has one of three
