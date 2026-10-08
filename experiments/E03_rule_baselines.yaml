@@ -1,0 +1,13 @@
+id: E3
+question: Does any rule-based setup have an edge before any machine learning?
+strategies_config: config/strategies.yaml
+costs_config: config/costs.yaml      # placeholders until E2 measures XTB fills
+universe_config: config/universe.yaml
+delays_seconds: [60]
+n_boot: 5000
+seed: 11
+gate:                                # proposals; confirm before trusting a pass
+  min_trades: 300
+  min_days: 100
+  min_share_years_positive: 0.6
+  ci_level: 0.90

@@ -192,6 +192,51 @@ class ParquetBars:
         out["day"] = pd.to_datetime(out["day"]).dt.date
         return out.sort_values(["symbol", "day"]).reset_index(drop=True)[columns]
 
+    def session_minute_bars(
+        self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed
+    ) -> pd.DataFrame:
+        """Regular-session minute bars: symbol, day, mod, open..close, volume, vwap.
+
+        Only 09:30 to the close (13:00 on early-close days); day is the New York date and mod
+        the minute of the day. Read month by month, for research runs.
+        """
+        columns = ["symbol", "day", "mod", "open", "high", "low", "close", "volume", "vwap"]
+        directory = self._root / "bars_raw_1m" / f"feed={feed.value}"
+        months = self._month_dirs(directory, start, end) if symbols else []
+        if not months:
+            return pd.DataFrame(columns=columns)
+        marks = ",".join("?" for _ in symbols)
+        sql = f"""
+            WITH raw AS (
+                SELECT DISTINCT symbol, timestamp, open, high, low, close, volume, vwap
+                FROM read_parquet(?, union_by_name=true)
+                WHERE symbol IN ({marks}) AND timestamp >= ? AND timestamp < ?
+            ),
+            f AS (
+                SELECT symbol, CAST(lt AS DATE) AS day, hour(lt) * 60 + minute(lt) AS mod,
+                       open, high, low, close, volume, vwap
+                FROM (SELECT *, timezone('America/New_York', timestamp) AS lt FROM raw)
+            )
+            SELECT * FROM f
+            WHERE mod >= 570 AND mod < CASE WHEN list_contains(?, day) THEN 780 ELSE 960 END
+        """  # noqa: S608
+        early = _early_close_days(start, end)
+        parts = []
+        con = duckdb.connect()
+        try:
+            con.execute("SET preserve_insertion_order = false")
+            for month in months:
+                glob = str(month / "part-*.parquet")
+                parts.append(con.execute(sql, [glob, *symbols, start, end, early]).df())
+        finally:
+            con.close()
+        parts = [p for p in parts if not p.empty]
+        if not parts:
+            return pd.DataFrame(columns=columns)
+        out = pd.concat(parts, ignore_index=True)
+        out["day"] = pd.to_datetime(out["day"]).dt.date
+        return out.sort_values(["symbol", "day", "mod"]).reset_index(drop=True)[columns]
+
     def outside_hours_examples(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed, limit: int = 10
     ) -> list[tuple[str, str]]:

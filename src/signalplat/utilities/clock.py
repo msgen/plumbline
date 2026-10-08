@@ -68,3 +68,13 @@ def is_early_close(day: date) -> bool:
 def regular_close_minute(day: date) -> int:
     """Minute of the New York day (from midnight) at which the regular session ends."""
     return 13 * 60 if is_early_close(day) else 16 * 60
+
+
+def month_starts(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Split [start, end) into calendar-month windows (UTC)."""
+    out, cur = [], start
+    while cur < end:
+        nxt = datetime(cur.year + (cur.month == 12), cur.month % 12 + 1, 1, tzinfo=UTC)
+        out.append((cur, min(nxt, end)))
+        cur = nxt
+    return out

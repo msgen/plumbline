@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from signalplat.accessors.actions_alpaca import AlpacaActions
@@ -16,7 +16,7 @@ from signalplat.contracts.types import Feed
 from signalplat.engines.adjust import adjust_for_splits
 from signalplat.engines.quality import sample_delisted
 from signalplat.engines.universe import eligible_assets, select_universe
-from signalplat.utilities.clock import Clock, SystemClock
+from signalplat.utilities.clock import Clock, SystemClock, month_starts
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env, require
 from signalplat.utilities.http import JsonHttp
@@ -29,16 +29,6 @@ MINUTE_CHUNK = 5
 # raw1: bars stored unadjusted (earlier versions stored split-adjusted bars).
 DATA_VERSION = "raw1"
 SAFE_LAG = timedelta(minutes=16)  # chunks ending later may be clamped, so are not marked done
-
-
-def month_starts(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
-    """Split [start, end) into calendar-month windows (UTC)."""
-    out, cur = [], start
-    while cur < end:
-        nxt = datetime(cur.year + (cur.month == 12), cur.month % 12 + 1, 1, tzinfo=UTC)
-        out.append((cur, min(nxt, end)))
-        cur = nxt
-    return out
 
 
 class IngestionManager:

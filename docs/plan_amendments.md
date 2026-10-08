@@ -26,6 +26,20 @@ produce live signals that differ from the backtest on roughly half the flagged d
 replay parity would fail. Either live data is upgraded to the full feed, or research features
 use the same IEX-scaled estimate (so the research sees the same noise) or avoid live volume.
 
+## Built after E1 (research code, not yet run on real data)
+
+- Triple-barrier labeler (`engines/labeling.py`): target, stop, time-out and no-trade outcomes;
+  entry delay; spread and slippage in the fills; time-outs keep their realised R (amendment 2).
+- Setup detectors (`engines/setups.py`): A (opening-range breakout), B (VWAP reclaim) and C
+  (gap and go, price part only; the catalyst check waits for E9/E10). A and C run with three
+  volume-trigger variants: `sip` (true RVOL), `iex_scaled` (what free live data gives) and
+  `none`. B carries variant `n/a`. First signal per symbol, day, strategy and variant.
+- `engines/features.py` computes RVOL by minute from both feeds; `engines/validation.py` has
+  the day-clustered bootstrap and the E3 gate lines (amendment 4).
+- Each strategy, variant, target and delay is one trial; the count is saved with the run.
+- Rule definitions (opening range 15 minutes, 1x ATR stop, 2R target, 60-minute limit, signals
+  between 09:35 and 11:00) are starting values in config/strategies.yaml, not tuned.
+
 ## To build into the engines (not written yet)
 
 **2. Expectancy must include time-outs (labeling, ranking, E12).** Every label has one of three

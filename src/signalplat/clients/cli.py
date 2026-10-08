@@ -55,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
     e1.add_argument("--start", type=_day, required=True)
     e1.add_argument("--end", type=_day, required=True)
     e1.add_argument("--config", default="experiments/E01_iex_vs_sip.yaml")
+    e3 = sub.add_parser("e3", help="E3: label rule-based setups and judge them after costs")
+    e3.add_argument("--symbols", default="", help="comma-separated symbols")
+    e3.add_argument("--symbols-file", help="file with one symbol per line")
+    e3.add_argument("--start", type=_day, required=True)
+    e3.add_argument("--end", type=_day, required=True)
+    e3.add_argument("--config", default="experiments/E03_rule_baselines.yaml")
     ins = sub.add_parser("inspect", help="show stored bars facts for one symbol and day")
     ins.add_argument("symbol")
     ins.add_argument("day", type=_day, help="YYYY-MM-DD (New York trading day)")
@@ -113,6 +119,12 @@ def _run(args: argparse.Namespace) -> int:
         print(table.head(10).to_string(index=False))
     elif args.command == "e1":
         result = ExperimentManager.from_env().run_e1(
+            args.config, _symbols(args), args.start, args.end)
+        print((Path(result["directory"]) / "report.md").read_text(encoding="utf-8"))
+        print(f"saved to {result['directory']}")
+        return 0 if result["passed"] else 1
+    elif args.command == "e3":
+        result = ExperimentManager.from_env().run_e3(
             args.config, _symbols(args), args.start, args.end)
         print((Path(result["directory"]) / "report.md").read_text(encoding="utf-8"))
         print(f"saved to {result['directory']}")

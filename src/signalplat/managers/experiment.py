@@ -5,14 +5,16 @@ from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from signalplat.accessors.bars_parquet import ParquetBars
 from signalplat.accessors.dataset_store import DatasetStore
 from signalplat.accessors.experiment_store import ExperimentStore
 from signalplat.contracts.types import Feed
-from signalplat.engines import feeds, quality
+from signalplat.engines import features, feeds, labeling, quality, setups, validation
 from signalplat.engines.adjust import adjust_for_splits
-from signalplat.engines.universe import membership
-from signalplat.utilities.clock import NY, Clock, SystemClock, regular_close_minute
+from signalplat.engines.universe import daily_context, membership
+from signalplat.utilities.clock import NY, Clock, SystemClock, month_starts, regular_close_minute
 from signalplat.utilities.config import load_config
 from signalplat.utilities.env import load_env
 from signalplat.utilities.ids import hash_config
@@ -69,6 +71,7 @@ class ExperimentManager:
     def _save(
         self, experiment: str, cfg: dict[str, Any], symbols: list[str], start: datetime,
         end: datetime, metrics: dict[str, Any], verdict: dict[str, Any], render, extra=None,
+        passed: bool | None = None,
     ) -> dict[str, Any]:
         failed = [k for k, v in verdict.items() if v["status"] == "fail"]
         run_id = f"{experiment}-{self._clock.now():%Y%m%dT%H%M%SZ}"
@@ -78,7 +81,8 @@ class ExperimentManager:
             "dataset_hashes": self._runs.dataset_hash(
                 "bars_raw_1d", "bars_raw_1m", "reference", "news", "corporate_actions", "edgar"),
             "window": [start, end], "symbols": symbols, **(extra or {}),
-            "metrics": metrics, "verdict": verdict, "passed": not failed,
+            "metrics": metrics, "verdict": verdict,
+            "passed": (not failed) if passed is None else passed,
         }
         directory = self._runs.write_run(run_id, record, render(record))
         return {**record, "directory": str(directory)}
@@ -103,6 +107,78 @@ class ExperimentManager:
         flag_label = feeds.label(_minutes(cfg["flag_time"]))
         verdict = feeds.evaluate_e1(study, cfg["gate"], error_label, flag_label)
         return self._save("E1", cfg, symbols, start, end, study, verdict, render_e1)
+
+    def run_e3(
+        self, config_path: str | Path, symbols: list[str], start: datetime, end: datetime
+    ) -> dict[str, Any]:
+        """E3: do the rule-based setups have an edge before any model, after costs and delay?
+
+        Runs month by month: detect setups on universe days, label them (triple barrier, with
+        entry delay and costs), keep the labels for later experiments, then judge each
+        strategy and volume-trigger variant on day-clustered statistics.
+        """
+        cfg = load_config(config_path)
+        scfg = load_config(cfg["strategies_config"])
+        costs = load_config(cfg["costs_config"])
+        ucfg = load_config(cfg["universe_config"])
+        win_hi = _minutes(scfg["window"]["end"])
+        _, daily_adj, members = self._universe_days(symbols, start, end, ucfg)
+        ctx = daily_context(daily_adj).merge(
+            members.loc[members["member"], ["symbol", "day"]], on=["symbol", "day"])
+        parts = []
+        for lo, hi in month_starts(start, end):
+            days = ctx[(ctx["day"] >= lo.date()) & (ctx["day"] < hi.date())]
+            if days.empty:
+                continue
+            log.info("detecting and labelling %s", f"{lo:%Y-%m}")
+            warm = lo - timedelta(days=35)       # earlier days feed the RVOL baselines
+            sip = self._bars.session_minute_bars(symbols, warm, hi, Feed.SIP)
+            iex = self._bars.session_minute_bars(symbols, warm, hi, Feed.IEX)
+            if sip.empty:
+                continue
+            rvol = features.rvol_grids(sip, iex, until=win_hi)
+            bars = sip[(sip["day"] >= lo.date()) & (sip["day"] < hi.date())]
+            rvol = rvol[(rvol["day"] >= lo.date()) & (rvol["day"] < hi.date())]
+            signals = setups.add_targets(
+                setups.detect(bars, days, rvol, scfg), scfg["target_r"])
+            month_parts = []
+            for delay in cfg["delays_seconds"]:
+                params = labeling.LabelParams(
+                    delay, scfg["time_limit_minutes"], costs["default_half_spread_pct"],
+                    costs["slippage_bps"] / 1e4)
+                labelled = labeling.label_signals(signals, bars, params)
+                month_parts.append(labelled.assign(delay_seconds=delay))
+            parts.extend(month_parts)
+            self._store.write_research("labels", pd.concat(month_parts, ignore_index=True))
+        labels = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+        if labels.empty:
+            summary, tiers = pd.DataFrame(), pd.DataFrame()
+        else:
+            keys = ["strategy", "variant", "target_r", "delay_seconds"]
+            summary = validation.summarize_labels(
+                labels, keys, cfg["gate"], cfg["n_boot"], cfg["seed"])
+            labels["price_tier"] = pd.cut(
+                labels["ref_price"], feeds.PRICE_BINS, labels=feeds.PRICE_LABELS).astype(str)
+            tiers = validation.summarize_labels(
+                labels, ["strategy", "variant", "price_tier"], cfg["gate"],
+                cfg["n_boot"], cfg["seed"])
+        verdict = {}
+        for row in summary.to_dict("records"):
+            name = f"{row['strategy']}|{row['variant']}|{row['target_r']}R|{row['delay_seconds']}s"
+            gate = row.get("gate", "no trades")
+            verdict[name] = {
+                "value": row.get("mean_r_lower"), "threshold": 0, "op": ">",
+                "status": "pass" if gate == "pass" else ("n/a" if gate == "no trades" else "fail"),
+                "detail": gate}
+        metrics = {
+            "summary": summary.to_dict("records"), "by_price_tier": tiers.to_dict("records"),
+            "trial_count": int(len(summary)), "signals": int(len(labels)),
+            "costs": {"half_spread": costs["default_half_spread_pct"],
+                      "slippage": costs["slippage_bps"] / 1e4},
+        }
+        any_pass = any(v["status"] == "pass" for v in verdict.values())
+        return self._save("E3", cfg, symbols, start, end, metrics, verdict, render_e3,
+                          passed=any_pass)
 
     def run_e0(
         self, config_path: str | Path, symbols: list[str], start: datetime, end: datetime
@@ -257,4 +333,38 @@ def render_e1(r: dict[str, Any]) -> str:
             f"- VWAP difference: median {v['median_vwap_bps']:.1f} bps, "
             f"p90 {v['p90_vwap_bps']:.1f} bps",
             f"- median RVOL error by price: {v['median_rvol_error_by_price']}", ""]
+    return "\n".join(lines) + "\n"
+
+
+def render_e3(r: dict[str, Any]) -> str:
+    m = r["metrics"]
+    lines = [f"# {r['run_id']}: rule-based setups, no model", "",
+             f"Result: **{'PASS' if r['passed'] else 'FAIL'}** "
+             "(passes if at least one strategy and variant clears the gate; if none does, "
+             "stop and redesign before building more)", "",
+             f"Trials counted (strategy x variant x target x delay): {m['trial_count']}. "
+             f"{m['signals']} labelled signals. Costs: spread {m['costs']['half_spread']:.4f}, "
+             f"slippage {m['costs']['slippage']:.4f} (placeholders until E2).",
+             "Gate: enough trades on enough distinct days, the day-clustered lower bound of mean "
+             "R above zero, and positive in most years. Time-outs count in R.", "",
+             "| Strategy | Variant | Target | Delay s | Signals | Trades | Days | Target % | "
+             "Stop % | Timeout % | Mean R | Lower | Yrs+ | Gate |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for x in m["summary"]:
+        if "mean_r" not in x:
+            lines.append(f"| {x['strategy']} | {x['variant']} | {x['target_r']} | "
+                         f"{x['delay_seconds']} | {x['signals']} | 0 | | | | | | | | no trades |")
+            continue
+        lines.append(
+            f"| {x['strategy']} | {x['variant']} | {x['target_r']} | {x['delay_seconds']} | "
+            f"{x['signals']} | {x['trades']} | {x['days']} | {x['target_rate']:.0%} | "
+            f"{x['stop_rate']:.0%} | {x['timeout_rate']:.0%} | {x['mean_r']:+.3f} | "
+            f"{x['mean_r_lower']:+.3f} | {x['share_years_positive']:.0%} | {x['gate']} |")
+    lines += ["", "## By price tier (reference price at the signal)", "",
+              "| Strategy | Variant | Tier | Trades | Days | Mean R | Lower |",
+              "|---|---|---|---|---|---|---|"]
+    for x in m["by_price_tier"]:
+        if "mean_r" in x:
+            lines.append(f"| {x['strategy']} | {x['variant']} | {x['price_tier']} | {x['trades']} "
+                         f"| {x['days']} | {x['mean_r']:+.3f} | {x['mean_r_lower']:+.3f} |")
     return "\n".join(lines) + "\n"

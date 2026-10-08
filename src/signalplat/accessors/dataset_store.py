@@ -55,6 +55,13 @@ class DatasetStore:
     def read_splits(self) -> pd.DataFrame | None:
         return read_parts(self._root / "corporate_actions" / "splits")
 
+    def write_research(self, name: str, df: pd.DataFrame) -> int:
+        """Setups and labels for later experiments: research/<name>/part-*.parquet."""
+        if df.empty:
+            return 0
+        write_part(df, self._root / "research" / name)
+        return len(df)
+
     # The manifest lets an interrupted backfill resume without refetching finished chunks.
     def is_done(self, key: str) -> bool:
         path = self._root / "_manifest.jsonl"
