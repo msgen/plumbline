@@ -1,7 +1,13 @@
-# Placeholder until E2 measures XTB fills.
-commission_free_monthly_eur: 100000
-commission_pct_above_limit: 0.002
-commission_min_eur: 10
-default_half_spread_pct: 0.0005
-slippage_bps: 2.0
+# XTB costs for real shares and ETFs (not CFDs). Source: XTB "Tabelul de comisioane si taxe",
+# in force from 30.09.2026, sections 1, 2 and 9. Spread and slippage are still placeholders until
+# E2 measures real fills.
+commission_free_monthly_eur: 100000   # cumulative turnover across all accounts, per month
+commission_pct_above_limit: 0.002     # 0.2% per transaction, opening and closing
+commission_min_eur: 10                # minimum per transaction above the limit
+fx_conversion_pct: 0.005              # 0.5% on any conversion; 0.8% on weekends and holidays
+                                      # (only when the instrument currency differs from the account)
+sec_fee_pct: 0.0000206                # US SEC fee: 0.00206% of the value sold
+custody_fee_pct_per_year: 0.0002      # only on average holdings above EUR 250,000
+default_half_spread_pct: 0.0005       # placeholder
+slippage_bps: 2.0                     # placeholder
 turnover_warn_fraction: 0.8

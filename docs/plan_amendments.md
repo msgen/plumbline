@@ -40,6 +40,30 @@ use the same IEX-scaled estimate (so the research sees the same noise) or avoid 
 - Rule definitions (opening range 15 minutes, 1x ATR stop, 2R target, 60-minute limit, signals
   between 09:35 and 11:00) are starting values in config/strategies.yaml, not tuned.
 
+## XTB fee table read (30.09.2026): what it confirms and what it does not
+
+Confirmed by the table: real shares and ETFs, 0% commission (minimum 0 EUR) up to EUR 100,000 of
+monthly turnover across all accounts, then 0.2% with a EUR 10 minimum per transaction; 0.5%
+currency conversion (0.8% on weekends and holidays) when the instrument currency differs from the
+account currency; US SEC fee 0.00206% of value sold; custody fee only above EUR 250,000; fractional
+rights are listed with the same commission. Transaction taxes on foreign purchases: France 0.4%
+(companies above EUR 1bn), Spain 0.2%, Italy 0.1%, UK stamp duty 0.5% to 1%. CFDs carry a 0.30%
+mark-up plus financing: not used. Dividends are withheld at the highest local rate unless a treaty
+applies; US-listed shares allow a W-8BEN form.
+
+Not confirmed, to check in xStation: (1) which ETFs are offered as real shares. The table lists ETFs
+on US markets only as CFDs, and EU retail rules often block US-domiciled ETFs, so the plan to use
+US-listed ETFs in dollars may not be possible; European-listed ETFs may need a currency conversion
+unless they have a dollar line. (2) Whether fractional rights cover US shares.
+
+Not in the table: income tax on trading profit. A separate document supplied by the user (an
+earlier research report, not checked here) says an intermediary registered in Romania withholds
+6% on each winning trade held under a year (3% above a year) with no offset for losses, while a
+foreign broker taxes 16% of the net annual gain with losses offset. If that applies to XTB's Romanian
+branch, tax would take about 0.05R per trade at a 40% win rate and 2R average win, as large as the
+edges tested so far. Verify with XTB (its Romanian tax help page) or an accountant before relying on
+any short-term result.
+
 ## E3 first run and what followed
 
 First E3 run (7 combinations, one geometry: 1x daily ATR stop, 2R target, 60 minutes): every
