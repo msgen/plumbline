@@ -52,6 +52,18 @@ the plan's E5 grid once, fixed in advance: stops (1x ATR, 0.5x ATR, structure), 
 confidence is raised for the trial count (Bonferroni). Do not add combinations after seeing
 results without recounting.
 
+## E3 second run: short-term rule-based path stopped
+
+189 trials (3 strategies, 3 volume variants where they apply, 3 stop rules, 3 targets,
+3 time limits), 516,213 labelled signals, 2023-10 to 2026-09. No combination passes the
+trial-adjusted gate. One of 189 has a positive net mean R (+0.003, lower bound -0.256). Gross R
+(before costs) is at most about +0.07R in the best rows, which are the best of 189 by net result and
+rest on 126 to 374 trades. The two large-sample strategies (A without a volume filter, B) are
+near -0.03R net. Under the decision rule agreed before the run (no pass and gross R near zero
+means stop), the simple short-term setups A, B and C have no edge worth trading in this data.
+Not tested: catalyst-filtered setups (news and filings classifier, E9/E10), because they were
+not built. Reusable: data layer, point-in-time universe, labeler, validation, experiment store.
+
 ## To build into the engines (not written yet)
 
 **2. Expectancy must include time-outs (labeling, ranking, E12).** Every label has one of three
