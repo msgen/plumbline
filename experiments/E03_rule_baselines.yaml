@@ -4,7 +4,15 @@ strategies_config: config/strategies.yaml
 costs_config: config/costs.yaml      # placeholders until E2 measures XTB fills
 universe_config: config/universe.yaml
 delays_seconds: [60]
-n_boot: 5000
+# Geometry grid (this is also the plan's E5). It is fixed here, before looking at results,
+# and every combination is a counted trial.
+stops:
+  - {mode: atr, atr_mult: 1.0}       # 1x the daily ATR below the signal
+  - {mode: atr, atr_mult: 0.5}       # half a daily ATR: a distance an hour can actually cover
+  - {mode: structure}                # below the opening range / VWAP dip / gap range low
+target_r: [1.5, 2.0, 3.0]
+time_limits: [30, 60, 90]
+n_boot: 5000                         # raised automatically for the trial adjustment
 seed: 11
 gate:                                # proposals; confirm before trusting a pass
   min_trades: 300

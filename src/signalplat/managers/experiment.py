@@ -139,32 +139,45 @@ class ExperimentManager:
             rvol = features.rvol_grids(sip, iex, until=win_hi)
             bars = sip[(sip["day"] >= lo.date()) & (sip["day"] < hi.date())]
             rvol = rvol[(rvol["day"] >= lo.date()) & (rvol["day"] < hi.date())]
-            signals = setups.add_targets(
-                setups.detect(bars, days, rvol, scfg), scfg["target_r"])
             month_parts = []
-            for delay in cfg["delays_seconds"]:
-                params = labeling.LabelParams(
-                    delay, scfg["time_limit_minutes"], costs["default_half_spread_pct"],
-                    costs["slippage_bps"] / 1e4)
-                labelled = labeling.label_signals(signals, bars, params)
-                month_parts.append(labelled.assign(delay_seconds=delay))
+            for stop_cfg in cfg["stops"]:
+                stop_name = _stop_name(stop_cfg)
+                signals = setups.detect(
+                    bars, days, rvol, {**scfg, "stop": {**scfg["stop"], **stop_cfg}})
+                signals = setups.add_targets(signals, cfg["target_r"])
+                signals["stop_mode"] = stop_name
+                signals["risk_pct"] = 1 - signals["stop"] / signals["ref_price"]
+                for limit in cfg["time_limits"]:
+                    for delay in cfg["delays_seconds"]:
+                        net = labeling.label_signals(signals, bars, labeling.LabelParams(
+                            delay, limit, costs["default_half_spread_pct"],
+                            costs["slippage_bps"] / 1e4))
+                        free = labeling.label_signals(signals, bars, labeling.LabelParams(
+                            delay, limit, 0.0, 0.0))
+                        net["r_gross"] = free["r"].to_numpy()      # same signals, no costs
+                        month_parts.append(net.assign(time_limit=limit, delay_seconds=delay))
             parts.extend(month_parts)
             self._store.write_research("labels", pd.concat(month_parts, ignore_index=True))
         labels = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
         if labels.empty:
             summary, tiers = pd.DataFrame(), pd.DataFrame()
         else:
-            keys = ["strategy", "variant", "target_r", "delay_seconds"]
+            keys = ["strategy", "variant", "stop_mode", "target_r", "time_limit", "delay_seconds"]
             summary = validation.summarize_labels(
                 labels, keys, cfg["gate"], cfg["n_boot"], cfg["seed"])
-            labels["price_tier"] = pd.cut(
-                labels["ref_price"], feeds.PRICE_BINS, labels=feeds.PRICE_LABELS).astype(str)
+            base = labels[(labels["stop_mode"] == _stop_name(cfg["stops"][0]))
+                          & (labels["target_r"] == cfg["target_r"][0])
+                          & (labels["time_limit"] == cfg["time_limits"][0])
+                          & (labels["delay_seconds"] == cfg["delays_seconds"][0])].copy()
+            base["price_tier"] = pd.cut(
+                base["ref_price"], feeds.PRICE_BINS, labels=feeds.PRICE_LABELS).astype(str)
             tiers = validation.summarize_labels(
-                labels, ["strategy", "variant", "price_tier"], cfg["gate"],
+                base, ["strategy", "variant", "price_tier"], cfg["gate"],
                 cfg["n_boot"], cfg["seed"])
         verdict = {}
         for row in summary.to_dict("records"):
-            name = f"{row['strategy']}|{row['variant']}|{row['target_r']}R|{row['delay_seconds']}s"
+            name = (f"{row['strategy']}|{row['variant']}|{row['stop_mode']}|{row['target_r']}R|"
+                    f"{row['time_limit']}m|{row['delay_seconds']}s")
             gate = row.get("gate", "no trades")
             verdict[name] = {
                 "value": row.get("mean_r_lower"), "threshold": 0, "op": ">",
@@ -236,6 +249,11 @@ class ExperimentManager:
         verdict = quality.evaluate_e0(metrics, gate)
         return self._save("E0", cfg, symbols, start, end, metrics, verdict, render_e0,
                           {"delisted_sample": sample})
+
+
+def _stop_name(stop_cfg: dict[str, Any]) -> str:
+    return stop_cfg["mode"] if stop_cfg["mode"] == "structure" else (
+        f"atr{stop_cfg.get('atr_mult', 1.0):g}")
 
 
 def _minutes(hhmm: str) -> int:
@@ -338,33 +356,43 @@ def render_e1(r: dict[str, Any]) -> str:
 
 def render_e3(r: dict[str, Any]) -> str:
     m = r["metrics"]
+    rows = [x for x in m["summary"] if "mean_r" in x]
+    positive = sum(1 for x in rows if x["mean_r"] > 0)
+    passing = sum(1 for x in rows if x["gate"] == "pass")
     lines = [f"# {r['run_id']}: rule-based setups, no model", "",
              f"Result: **{'PASS' if r['passed'] else 'FAIL'}** "
-             "(passes if at least one strategy and variant clears the gate; if none does, "
+             "(passes if at least one combination clears the gate; if none does, "
              "stop and redesign before building more)", "",
-             f"Trials counted (strategy x variant x target x delay): {m['trial_count']}. "
-             f"{m['signals']} labelled signals. Costs: spread {m['costs']['half_spread']:.4f}, "
-             f"slippage {m['costs']['slippage']:.4f} (placeholders until E2).",
+             f"Trials counted (strategy x variant x stop x target x time limit x delay): "
+             f"{m['trial_count']}. {m['signals']} labelled signals. Costs: spread "
+             f"{m['costs']['half_spread']:.4f}, slippage {m['costs']['slippage']:.4f} "
+             "(placeholders until E2).",
+             f"{positive} of {len(rows)} combinations have a positive mean R after costs; "
+             f"{passing} pass the gate.",
              "Gate: enough trades on enough distinct days, the day-clustered lower bound of mean "
-             "R above zero, and positive in most years. Time-outs count in R.", "",
-             "| Strategy | Variant | Target | Delay s | Signals | Trades | Days | Target % | "
-             "Stop % | Timeout % | Mean R | Lower | Yrs+ | Gate |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    for x in m["summary"]:
-        if "mean_r" not in x:
-            lines.append(f"| {x['strategy']} | {x['variant']} | {x['target_r']} | "
-                         f"{x['delay_seconds']} | {x['signals']} | 0 | | | | | | | | no trades |")
-            continue
+             "R above zero at a confidence raised for the number of trials (Bonferroni), and "
+             "positive in most years. Time-outs count in R. Gross R is before costs; "
+             "risk % is the average stop distance.", "",
+             "## Best 20 combinations by mean R", "",
+             "| Strategy | Variant | Stop | Target | Limit | Trades | Days | Tgt % | Stop % | "
+             "Out % | Risk % | Gross R | Mean R | Lower (adj) | Yrs+ | Gate |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for x in sorted(rows, key=lambda x: -x["mean_r"])[:20]:
         lines.append(
-            f"| {x['strategy']} | {x['variant']} | {x['target_r']} | {x['delay_seconds']} | "
-            f"{x['signals']} | {x['trades']} | {x['days']} | {x['target_rate']:.0%} | "
-            f"{x['stop_rate']:.0%} | {x['timeout_rate']:.0%} | {x['mean_r']:+.3f} | "
-            f"{x['mean_r_lower']:+.3f} | {x['share_years_positive']:.0%} | {x['gate']} |")
-    lines += ["", "## By price tier (reference price at the signal)", "",
-              "| Strategy | Variant | Tier | Trades | Days | Mean R | Lower |",
+            f"| {x['strategy']} | {x['variant']} | {x['stop_mode']} | {x['target_r']}R | "
+            f"{x['time_limit']}m | {x['trades']} | {x['days']} | {x['target_rate']:.0%} | "
+            f"{x['stop_rate']:.0%} | {x['timeout_rate']:.0%} | "
+            f"{100 * x.get('mean_risk_pct', float('nan')):.1f} | "
+            f"{x.get('mean_r_gross', float('nan')):+.3f} | {x['mean_r']:+.3f} | "
+            f"{x['mean_r_lower_adjusted']:+.3f} | {x['share_years_positive']:.0%} | "
+            f"{'pass' if x['gate'] == 'pass' else 'fail'} |")
+    lines += ["", "The full table of every combination is in run.json.", "",
+              "## By price tier (first geometry only; reference price at the signal)", "",
+              "| Strategy | Variant | Tier | Trades | Days | Mean R | Lower (adj) |",
               "|---|---|---|---|---|---|---|"]
     for x in m["by_price_tier"]:
         if "mean_r" in x:
-            lines.append(f"| {x['strategy']} | {x['variant']} | {x['price_tier']} | {x['trades']} "
-                         f"| {x['days']} | {x['mean_r']:+.3f} | {x['mean_r_lower']:+.3f} |")
+            lines.append(
+                f"| {x['strategy']} | {x['variant']} | {x['price_tier']} | {x['trades']} | "
+                f"{x['days']} | {x['mean_r']:+.3f} | {x['mean_r_lower_adjusted']:+.3f} |")
     return "\n".join(lines) + "\n"

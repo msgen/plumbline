@@ -60,6 +60,8 @@ def config(tmp_path):
         f"strategies_config: {ROOT / 'config/strategies.yaml'}\n"
         f"costs_config: {ROOT / 'config/costs.yaml'}\nuniverse_config: {universe}\n"
         "delays_seconds: [60]\nn_boot: 500\nseed: 3\n"
+        "stops: [{mode: atr, atr_mult: 1.0}, {mode: structure}]\n"
+        "target_r: [2.0]\ntime_limits: [60]\n"
         "gate: {min_trades: 3, min_days: 3, min_share_years_positive: 0.5, ci_level: 0.9}\n")
     return e3
 
@@ -70,7 +72,8 @@ def test_e3_end_to_end_variants_and_labels(tmp_path):
                             FixedClock(datetime(2026, 9, 15, 12, 0, tzinfo=UTC)))
     res = mgr.run_e3(config(tmp_path), ["AAA"], datetime(2026, 7, 1, tzinfo=UTC),
                      datetime(2026, 9, 1, tzinfo=UTC))
-    rows = {(r["strategy"], r["variant"]): r for r in res["metrics"]["summary"]}
+    rows = {(r["strategy"], r["variant"]): r for r in res["metrics"]["summary"]
+            if r["stop_mode"] == "atr1"}
     a_none, a_sip = rows[("A_breakout", "none")], rows[("A_breakout", "sip")]
     # the "none" variant fires on every scanned day; the volume variants only on the busy days
     assert a_none["trades"] >= 25      # 45 days minus ~15 days of universe warm-up
@@ -79,8 +82,12 @@ def test_e3_end_to_end_variants_and_labels(tmp_path):
     assert ("A_breakout", "iex_scaled") in rows                  # IEX at 1/10 scales back to SIP
     # the climb after the breakout reaches the 2R target, so the average is positive
     assert a_none["mean_r"] > 1.0 and a_none["target_rate"] > 0.9
-    assert res["passed"] and res["verdict"]["A_breakout|none|2.0R|60s"]["status"] == "pass"
+    assert res["passed"] and res["verdict"]["A_breakout|none|atr1|2.0R|60m|60s"]["status"] == "pass"
     assert res["metrics"]["trial_count"] == len(res["metrics"]["summary"])
+    both_stops = {r["stop_mode"] for r in res["metrics"]["summary"]}
+    assert both_stops == {"atr1", "structure"}                  # each stop rule is a trial
+    assert a_none["mean_r_gross"] > a_none["mean_r"]            # costs cost something
+    assert 0 < a_none["mean_risk_pct"] < 0.05
     run_dir = tmp_path / "experiments" / res["run_id"]
     assert "rule-based setups" in (run_dir / "report.md").read_text()
     saved = json.loads((run_dir / "run.json").read_text())

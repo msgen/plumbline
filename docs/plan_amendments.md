@@ -40,6 +40,18 @@ use the same IEX-scaled estimate (so the research sees the same noise) or avoid 
 - Rule definitions (opening range 15 minutes, 1x ATR stop, 2R target, 60-minute limit, signals
   between 09:35 and 11:00) are starting values in config/strategies.yaml, not tuned.
 
+## E3 first run and what followed
+
+First E3 run (7 combinations, one geometry: 1x daily ATR stop, 2R target, 60 minutes): every
+strategy and volume variant had a negative mean R after costs (-0.014 to -0.074), positive in
+0 to 50% of years, and 89 to 100% of trades timed out. The volume variants did not differ.
+The geometry was a poor fit for the horizon (a 2R target is about 5% away), so the run was
+low-powered, not conclusive. The runner now reports gross R and average stop distance, and runs
+the plan's E5 grid once, fixed in advance: stops (1x ATR, 0.5x ATR, structure), targets
+(1.5R, 2R, 3R), time limits (30, 60, 90 minutes). Every combination is a trial and the gate's
+confidence is raised for the trial count (Bonferroni). Do not add combinations after seeing
+results without recounting.
+
 ## To build into the engines (not written yet)
 
 **2. Expectancy must include time-outs (labeling, ranking, E12).** Every label has one of three

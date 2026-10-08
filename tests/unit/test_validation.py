@@ -61,3 +61,27 @@ def test_no_trade_rows_are_counted_as_signals_not_trades():
     assert out["gate"].startswith("fail: trades 2 < 300")
     empty = labels.assign(outcome="no_trade")
     assert summarize_labels(empty, ["strategy"], GATE, n_boot=200).iloc[0]["gate"] == "no trades"
+
+
+def test_more_trials_make_the_same_result_harder_to_pass():
+    rng = np.random.default_rng(8)
+    n = 1500
+    day = pd.date_range("2023-01-01", periods=600, freq="D").date
+    r = rng.normal(0.08, 1.0, n)                               # a weak edge
+    one = pd.DataFrame({"g": "a", "outcome": "timeout", "day": rng.choice(day, n), "r": r})
+    many = pd.concat([one.assign(g=f"g{i}") for i in range(40)], ignore_index=True)
+    a = summarize_labels(one, ["g"], GATE, n_boot=4000, seed=1).iloc[0]
+    b = summarize_labels(many, ["g"], GATE, n_boot=4000, seed=1).iloc[0]
+    assert a["trials"] == 1 and b["trials"] == 40
+    assert abs(a["mean_r_lower"] - a["mean_r_lower_adjusted"]) < 1e-12     # nothing to adjust
+    assert b["mean_r_lower_adjusted"] < b["mean_r_lower"]                  # stricter bound
+
+
+def test_gross_r_and_risk_are_summarised_when_present():
+    labels = pd.DataFrame({
+        "g": "a", "day": [pd.Timestamp("2024-01-02").date()] * 4,
+        "outcome": ["target", "stop", "timeout", "timeout"],
+        "r": [1.9, -1.1, 0.0, -0.1], "r_gross": [2.0, -1.0, 0.1, 0.0],
+        "risk_pct": [0.02, 0.02, 0.03, 0.03]})
+    out = summarize_labels(labels, ["g"], GATE, n_boot=100).iloc[0]
+    assert abs(out["mean_r_gross"] - 0.275) < 1e-12 and abs(out["mean_risk_pct"] - 0.025) < 1e-12
