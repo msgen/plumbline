@@ -237,7 +237,9 @@ def render_e1(r: dict[str, Any]) -> str:
               "SIP/IEX ratio. Flag agreement counts the days either feed flags "
               f"(RVOL >= {cfg['rvol_flag']}), not the many days neither does.", ""]
     funnel = r["metrics"].get("funnel", {})
-    lines += [f"Volume counted from {cfg.get('from_time', '09:30')}.",
+    lo, hi = r["window"]
+    lines += [f"Window {str(lo)[:10]} to {str(hi)[:10]}, {len(r['symbols'])} symbols. "
+              f"Volume counted from {cfg.get('from_time', '09:30')}.",
               f"Where symbol-days drop out: {funnel}", ""]
     for lab, v in r["metrics"].items():
         if lab == "funnel":
