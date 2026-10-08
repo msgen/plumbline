@@ -76,7 +76,7 @@ def test_e3_end_to_end_variants_and_labels(tmp_path):
     assert a_none["trades"] >= 25      # 45 days minus ~15 days of universe warm-up
     assert 1 <= a_sip["trades"] <= len(BUSY)
     assert a_sip["trades"] < a_none["trades"]
-    assert ("A_breakout", "iex_scaled") in rows                        # IEX scaled to 1/10 tracks SIP
+    assert ("A_breakout", "iex_scaled") in rows                  # IEX at 1/10 scales back to SIP
     # the climb after the breakout reaches the 2R target, so the average is positive
     assert a_none["mean_r"] > 1.0 and a_none["target_rate"] > 0.9
     assert res["passed"] and res["verdict"]["A_breakout|none|2.0R|60s"]["status"] == "pass"
