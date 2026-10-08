@@ -68,3 +68,13 @@ def test_error_by_price_bucket_and_gate_lines():
     assert v["flag_agreement_0945"]["status"] == "pass"
     assert evaluate_e1({}, gate, "0935", "0945")["flag_agreement_0945"]["status"] == "n/a"
     assert date(2026, 8, 3) == DAYS[0]
+
+
+def test_funnel_counts_where_symbol_days_drop_out():
+    sip = feed([1000.0] * 30)
+    iex = feed([100.0] * 30).iloc[:20]            # IEX covers only the first 20 days
+    study = rvol_study(sip, iex, members(DAYS[10:25]), MIN)
+    f = study["funnel"]
+    assert (f["sip_symbol_days"], f["iex_symbol_days"], f["both_feeds"]) == (30, 20, 20)
+    assert f["both_feeds_and_universe"] == 10 and f["universe_days_in_period"] == 15
+    assert f["usable_by_time"]["0935"] == 10

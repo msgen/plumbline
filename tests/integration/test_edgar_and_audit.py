@@ -276,6 +276,13 @@ def test_opening_volume_matches_a_pandas_calculation(tmp_path):
     assert ParquetBars(tmp_path).opening_volume(
         ["AAA"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC), Feed.IEX,
         [575]).empty
+    # leaving out the 09:30 bar (the opening auction) removes exactly that bar's volume
+    ex_open = ParquetBars(tmp_path).opening_volume(
+        ["AAA"], datetime(2026, 9, 1, tzinfo=UTC), datetime(2026, 12, 1, tzinfo=UTC), Feed.SIP,
+        [575], from_minute=571).set_index("day")["v_0935"]
+    first = df[df["mod"] == 570].set_index("day")["volume"]
+    full = got.set_index("day")["v_0935"]
+    assert all(abs((full[d] - first[d]) - ex_open[d]) < 1e-9 for d in full.index)
 
 
 def test_e1_end_to_end(tmp_path):

@@ -1,0 +1,14 @@
+id: E1b
+question: Does E1 improve if the opening-auction minute is left out of both feeds?
+# Variant of E1, recorded as an extra trial: volume is counted from 09:31, not 09:30.
+from_time: "09:31"
+times: ["09:35", "09:45", "10:00", "10:30"]
+trailing_days: 20
+min_history_days: 10
+rvol_flag: 2.5
+error_time: "10:00"
+flag_time: "09:45"
+gate:
+  median_rvol_error: 0.15
+  flag_agreement: 0.90
+universe_config: config/universe.yaml

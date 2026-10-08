@@ -142,9 +142,9 @@ class ParquetBars:
 
     def opening_volume(
         self, symbols: Sequence[str], start: datetime, end: datetime, feed: Feed,
-        minutes: Sequence[int],
+        minutes: Sequence[int], from_minute: int = 570,
     ) -> pd.DataFrame:
-        """Volume and price*volume from 09:30 up to each cut-off minute, per symbol-day.
+        """Volume and price*volume from `from_minute` (09:30) up to each cut-off, per symbol-day.
 
         `minutes` are minutes since midnight New York (575 = 09:35). Columns are v_HHMM and
         pv_HHMM (sum of bar vwap * volume), so VWAP is pv / v. Computed month by month in
@@ -173,7 +173,7 @@ class ParquetBars:
                 FROM (SELECT *, timezone('America/New_York', timestamp) AS lt FROM raw)
             )
             SELECT symbol, day, {select}
-            FROM f WHERE mod >= 570 AND mod < {int(max(minutes))}
+            FROM f WHERE mod >= {int(from_minute)} AND mod < {int(max(minutes))}
             GROUP BY symbol, day
         """  # noqa: S608
         parts = []

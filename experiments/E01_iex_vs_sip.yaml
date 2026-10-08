@@ -1,5 +1,6 @@
 id: E1
 question: Can free IEX live data replace paid real-time data near the open?
+from_time: "09:30"
 times: ["09:35", "09:45", "10:00", "10:30"]
 trailing_days: 20
 min_history_days: 10

@@ -89,17 +89,18 @@ class ExperimentManager:
         """E1: can scaled IEX volume replace SIP volume for RVOL and VWAP near the open?"""
         cfg = load_config(config_path)
         ucfg = load_config(cfg["universe_config"])
-        minutes = [int(t[:2]) * 60 + int(t[3:]) for t in cfg["times"]]
+        minutes = [_minutes(t) for t in cfg["times"]]
+        from_minute = _minutes(cfg.get("from_time", "09:30"))
         _, _, members = self._universe_days(symbols, start, end, ucfg)
         log.info("summarising opening volume (SIP)")
-        sip = self._bars.opening_volume(symbols, start, end, Feed.SIP, minutes)
+        sip = self._bars.opening_volume(symbols, start, end, Feed.SIP, minutes, from_minute)
         log.info("summarising opening volume (IEX)")
-        iex = self._bars.opening_volume(symbols, start, end, Feed.IEX, minutes)
+        iex = self._bars.opening_volume(symbols, start, end, Feed.IEX, minutes, from_minute)
         study = feeds.rvol_study(
             sip, iex, members, minutes, cfg["trailing_days"], cfg["min_history_days"],
             cfg["rvol_flag"])
-        error_label = feeds.label(int(cfg["error_time"][:2]) * 60 + int(cfg["error_time"][3:]))
-        flag_label = feeds.label(int(cfg["flag_time"][:2]) * 60 + int(cfg["flag_time"][3:]))
+        error_label = feeds.label(_minutes(cfg["error_time"]))
+        flag_label = feeds.label(_minutes(cfg["flag_time"]))
         verdict = feeds.evaluate_e1(study, cfg["gate"], error_label, flag_label)
         return self._save("E1", cfg, symbols, start, end, study, verdict, render_e1)
 
@@ -159,6 +160,10 @@ class ExperimentManager:
         verdict = quality.evaluate_e0(metrics, gate)
         return self._save("E0", cfg, symbols, start, end, metrics, verdict, render_e0,
                           {"delisted_sample": sample})
+
+
+def _minutes(hhmm: str) -> int:
+    return int(hhmm[:2]) * 60 + int(hhmm[3:])
 
 
 def render_e0(r: dict[str, Any]) -> str:
@@ -231,7 +236,12 @@ def render_e1(r: dict[str, Any]) -> str:
               f"{cfg['trailing_days']} days at the same time. IEX is scaled by its trailing "
               "SIP/IEX ratio. Flag agreement counts the days either feed flags "
               f"(RVOL >= {cfg['rvol_flag']}), not the many days neither does.", ""]
+    funnel = r["metrics"].get("funnel", {})
+    lines += [f"Volume counted from {cfg.get('from_time', '09:30')}.",
+              f"Where symbol-days drop out: {funnel}", ""]
     for lab, v in r["metrics"].items():
+        if lab == "funnel":
+            continue
         if not v.get("n"):
             lines += [f"## {lab[:2]}:{lab[2:]}: no comparable days", ""]
             continue

@@ -33,6 +33,12 @@ def rvol_study(
     m = m.sort_values(["symbol", "day"]).reset_index(drop=True)
     keep = members.loc[members["member"], ["symbol", "day", "price"]]
     out: dict[str, Any] = {}
+    out["funnel"] = {
+        "sip_symbol_days": int(len(sip)), "iex_symbol_days": int(len(iex)),
+        "both_feeds": int(len(m)),
+        "both_feeds_and_universe": int(len(m.merge(keep, on=["symbol", "day"]))),
+        "universe_days_in_period": int(len(keep)),
+    }
     for minute in minutes:
         lab = label(minute)
         s, i = m[f"v_{lab}_sip"], m[f"v_{lab}_iex"]
@@ -57,6 +63,7 @@ def rvol_study(
         }).merge(keep, on=["symbol", "day"], how="inner")
         valid = frame.dropna(subset=["rvol_sip", "rvol_est"])
         out[lab] = _one_time(valid, frame, flag)
+        out["funnel"].setdefault("usable_by_time", {})[lab] = int(len(valid))
     return out
 
 
